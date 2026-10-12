@@ -145,6 +145,43 @@ async function load(){
     if(st.data){ settings = st.data; applyBg(); }
   }catch(e){ loadError = "تعذر تحميل البيانات. تأكد من الاتصال بالإنترنت ومن إعدادات الربط."; }
 }
+let stats = null, statsErr = "", statsBusy = false;
+async function loadStats(){
+  if(statsBusy) return; statsBusy = true;
+  try{
+    const r = await sb.rpc("visit_stats");
+    if(r.error){ stats=null; statsErr="تعذر تحميل الإحصائيات. تأكد من تنفيذ ملف setup_v3.sql ("+r.error.message+")"; }
+    else { stats=r.data; statsErr=""; }
+  }catch(e){ stats=null; statsErr="تعذر تحميل الإحصائيات."; }
+  statsBusy = false; render();
+}
+async function logVisit(){
+  try{
+    if(isAdmin) return;
+    let id = localStorage.getItem("lib_vid");
+    if(!id){ id = crypto.randomUUID(); localStorage.setItem("lib_vid", id); }
+    if(Date.now() - (+localStorage.getItem("lib_vlast")||0) < 30*60*1000) return;
+    const r = await sb.from("visits").insert({visitor:id});
+    if(!r.error) localStorage.setItem("lib_vlast", String(Date.now()));
+  }catch(_){}
+}
+function statsPanel(){
+  if(statsErr) return `<div class="panel"><h2>📈 إحصائيات الدخول</h2><p class="hint">${esc(statsErr)}</p><button class="btn sec sm" id="stats-reload">إعادة المحاولة</button></div>`;
+  if(!stats) return `<div class="panel"><h2>📈 إحصائيات الدخول</h2><p class="hint">جارٍ التحميل…</p></div>`;
+  const box = (n,t) => `<div style="flex:1 1 40%;background:var(--soft);border-radius:10px;padding:10px;text-align:center"><div style="font-size:1.4rem;font-weight:700;color:var(--brand2)">${n}</div><div class="hint">${t}</div></div>`;
+  const days = stats.daily || [], max = Math.max(1, ...days.map(x=>x.opens));
+  return `<div class="panel"><h2>📈 إحصائيات الدخول</h2>
+   <div style="display:flex;flex-wrap:wrap;gap:8px">
+    ${box(stats.today_opens,"مرات الفتح اليوم")}${box(stats.today_devices,"أجهزة اليوم")}
+    ${box(stats.week_opens,"مرات الفتح (7 أيام)")}${box(stats.week_devices,"أجهزة (7 أيام)")}
+    ${box(stats.month_opens,"مرات الفتح (30 يومًا)")}${box(stats.month_devices,"أجهزة (30 يومًا)")}
+    ${box(stats.total_opens,"إجمالي مرات الفتح")}${box(stats.total_devices,"إجمالي الأجهزة")}
+   </div>
+   <h3>آخر 14 يومًا (مرات الفتح)</h3>
+   ${days.length ? days.map(x=>`<div style="display:flex;align-items:center;gap:8px;margin:4px 0;font-size:.85rem"><span style="width:60px;direction:ltr">${esc(String(x.d).slice(5))}</span><div style="flex:1;background:var(--soft);border-radius:6px"><div style="width:${Math.round(x.opens/max*100)}%;background:var(--brand);height:14px;border-radius:6px"></div></div><b>${x.opens}</b></div>`).join("") : '<p class="hint">لا توجد بيانات بعد.</p>'}
+   <p class="hint">الجهاز = متصفح أو تطبيق واحد. تُحسب الزيارة مرة كل 30 دقيقة لكل جهاز، ولا تُحسب زياراتك أنت. الأرقام تقريبية.</p>
+   <button class="btn sec sm" id="stats-reload">تحديث</button></div>`;
+}
 let adminErr = false, adminFor = null;
 async function checkAdmin(){
   if(!session){ isAdmin=false; adminFor=null; adminErr=false; return; }
@@ -228,6 +265,7 @@ function viewAdmin(){
    <label>تعتيم الصورة: <span id="dimv">${settings.bg_dim ?? 40}</span>%</label><input id="bg-dim" type="range" min="0" max="80" value="${settings.bg_dim ?? 40}">
    <p class="hint">الصورة تُصغَّر تلقائيًا لتفتح بسرعة. إن اخترتَ صورة فإنها تُقدَّم على اللون.</p>
    <p><button class="btn" id="bg-save" ${busy?"disabled":""}>حفظ المظهر</button> <button class="btn sec" id="bg-reset">إعادة الافتراضي</button></p></div>
+  ${statsPanel()}
   <h2>كل المحاضرات (${lectures.length})</h2>${searchBlock()}
   ${list.length?list.map(l=>lecCard(l,true)).join(""):`<div class="empty">لا توجد محاضرات.</div>`}`;
 }
@@ -242,6 +280,7 @@ function render(keepFocus){
   else if(h.startsWith("#/admin")) html = viewAdmin();
   else html = viewHome();
   $("#app").innerHTML = html;
+  if(h.startsWith("#/admin") && isAdmin && !stats && !statsErr && !statsBusy) loadStats();
   if(hadFocus && $("#q")){ $("#q").focus(); try{$("#q").setSelectionRange(pos,pos)}catch(_){} }
 }
 
@@ -259,6 +298,7 @@ document.addEventListener("click", async e => {
   if(t.dataset.del){ delLecture(t.dataset.del); return; }
   if(t.id==="retry"){ await load(); render(); }
   if(t.id==="retryadmin"){ await checkAdmin(); render(); }
+  if(t.id==="stats-reload"){ statsErr=""; stats=null; render(); }
   if(t.id==="login") doLogin();
   if(t.id==="sendotp") sendOtp();
   if(t.id==="bg-save") saveBg(false);
@@ -409,7 +449,7 @@ async function init(){
     if(ev==="TOKEN_REFRESHED" || ev==="USER_UPDATED" || (ev==="SIGNED_IN" && sess && sess.user && sess.user.id===prev)) return;
     await checkAdmin(); editing=null; render();
   });
-  await load(); render();
+  await load(); render(); logVisit();
   const refresh = async () => { if(busy || editing || document.hidden || $("#reader").style.display==="flex") return; const a=document.activeElement; if(a && /INPUT|TEXTAREA|SELECT/.test(a.tagName)) return; await load(); render(); };
   document.addEventListener("visibilitychange", refresh);
   setInterval(refresh, 90000);
@@ -418,4 +458,4 @@ init();
 if('serviceWorker' in navigator) addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
 </script>
 </body>
-  </html>
+</html>
