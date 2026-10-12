@@ -62,6 +62,9 @@ label{display:block;margin:12px 0 4px;font-weight:500}
 .hint{font-size:.85rem;color:var(--mute)}
 body{transition:background .3s}
 .custombg main>h2,.custombg .crumb,.custombg .crumb a,.custombg footer,.custombg footer a,.custombg main>.hint{color:#fff;text-shadow:0 1px 3px #000b}
+.ann{display:flex;gap:10px;align-items:center;justify-content:space-between;background:var(--soft);border:1px solid var(--brand);color:var(--brand2);border-radius:12px;padding:10px 14px;margin-bottom:14px}
+.ann span{flex:1}
+.new{background:var(--ok);color:#fff;border-radius:8px;padding:0 8px;font-size:.75rem;margin-inline-start:6px;font-weight:500}
 footer{text-align:center;color:var(--mute);font-size:.8rem;padding:20px}
 </style>
 </head>
@@ -86,7 +89,7 @@ const fmtSize = b => b ? (b/1048576).toFixed(1) + " MB" : "";
 const norm = s => String(s||"").toLowerCase().trim();
 
 let sb = null, subjects = [], lectures = [], session = null, isAdmin = false;
-let settings = {}, colorTouched = false;
+let settings = {}, colorTouched = false, anns = [];
 let q = "", filter = "all", editing = null, busy = false, loadError = "";
 
 function toast(msg, type="ok"){const t=$("#toast");t.textContent=msg;t.className=type;t.style.display="block";clearTimeout(toast.t);toast.t=setTimeout(()=>t.style.display="none",type==="ok"?3500:7000)}
@@ -143,6 +146,8 @@ async function load(){
     subjects = a.data; lectures = b.data; loadError = "";
     const st = await sb.from("site_settings").select("*").eq("id",1).maybeSingle();
     if(st.data){ settings = st.data; applyBg(); }
+    const an = await sb.from("announcements").select("*").order("created_at",{ascending:false}).limit(30);
+    if(!an.error) anns = an.data || [];
   }catch(e){ loadError = "تعذر تحميل البيانات. تأكد من الاتصال بالإنترنت ومن إعدادات الربط."; }
 }
 let stats = null, statsErr = "", statsBusy = false;
@@ -164,6 +169,37 @@ async function logVisit(){
     const r = await sb.from("visits").insert({visitor:id});
     if(!r.error) localStorage.setItem("lib_vlast", String(Date.now()));
   }catch(_){}
+}
+function banner(){
+  const a = anns.find(x=>x.active); if(!a) return "";
+  let seen=""; try{ seen = localStorage.getItem("lib_ann_seen")||""; }catch(_){}
+  if(seen===String(a.id)) return "";
+  return `<div class="ann"><span>📢 ${esc(a.message)}</span><button class="btn sec sm" id="ann-close" data-id="${a.id}">حسنًا</button></div>`;
+}
+function annPanel(){
+  return `<div class="panel"><h2>📢 إعلان للطلاب</h2>
+   <textarea id="ann-text" rows="2" maxlength="500" placeholder="مثال: أُضيفت محاضرات الأنسجة الجديدة"></textarea>
+   <p><button class="btn" id="ann-post">نشر الإعلان</button></p>
+   ${anns.length ? anns.slice(0,10).map(a=>`<div class="lec" style="margin:8px 0"><div>${esc(a.message)}</div><div class="m">${fmtDate(a.created_at)} · ${a.active?"ظاهر":"مخفي"}</div><div class="acts"><button class="btn sec sm" data-anntoggle="${a.id}">${a.active?"إخفاء":"إظهار"}</button><button class="btn del sm" data-anndel="${a.id}">حذف</button></div></div>`).join("") : '<p class="hint">لا توجد إعلانات.</p>'}
+   <p class="hint">يظهر أحدث إعلان ظاهر لكل طالب عند فتح المكتبة، ويختفي عنده بعد ضغط «حسنًا».</p></div>`;
+}
+async function postAnn(){
+  const m=$("#ann-text").value.trim(); if(!m) return toast("اكتب نص الإعلان.","err");
+  const r=await sb.from("announcements").insert({message:m});
+  if(r.error) return toast("فشل النشر: "+r.error.message+" — تأكد من تنفيذ setup_v4.sql","err");
+  toast("تم نشر الإعلان."); await load(); render();
+}
+async function toggleAnn(id){
+  const a=anns.find(x=>String(x.id)===String(id)); if(!a) return;
+  const r=await sb.from("announcements").update({active:!a.active}).eq("id",id);
+  if(r.error) return toast("فشل التعديل: "+r.error.message,"err");
+  await load(); render();
+}
+async function delAnn(id){
+  if(!confirm("حذف هذا الإعلان نهائيًا؟")) return;
+  const r=await sb.from("announcements").delete().eq("id",id);
+  if(r.error) return toast("فشل الحذف: "+r.error.message,"err");
+  toast("تم حذف الإعلان."); await load(); render();
 }
 function statsPanel(){
   if(statsErr) return `<div class="panel"><h2>📈 إحصائيات الدخول</h2><p class="hint">${esc(statsErr)}</p><button class="btn sec sm" id="stats-reload">إعادة المحاولة</button></div>`;
@@ -198,8 +234,8 @@ async function checkAdmin(){
 
 /* ---------- العرض ---------- */
 function lecCard(l, admin){
-  const s = subj(l.subject_id);
-  return `<div class="lec"><h3>${esc(l.title)}</h3>
+  const s = subj(l.subject_id), isNew = Date.now() - new Date(l.created_at).getTime() < 7*86400000;
+  return `<div class="lec"><h3>${esc(l.title)}${isNew?'<span class="new">جديد</span>':''}</h3>
   <div class="m">${s?esc(s.icon+" "+s.name_ar):""} · أضيفت ${fmtDate(l.created_at)} ${l.file_size?"· "+fmtSize(l.file_size):""}</div>
   ${l.description?`<p>${esc(l.description)}</p>`:""}
   <div class="acts">
@@ -265,6 +301,7 @@ function viewAdmin(){
    <label>تعتيم الصورة: <span id="dimv">${settings.bg_dim ?? 40}</span>%</label><input id="bg-dim" type="range" min="0" max="80" value="${settings.bg_dim ?? 40}">
    <p class="hint">الصورة تُصغَّر تلقائيًا لتفتح بسرعة. إن اخترتَ صورة فإنها تُقدَّم على اللون.</p>
    <p><button class="btn" id="bg-save" ${busy?"disabled":""}>حفظ المظهر</button> <button class="btn sec" id="bg-reset">إعادة الافتراضي</button></p></div>
+  ${annPanel()}
   ${statsPanel()}
   <h2>كل المحاضرات (${lectures.length})</h2>${searchBlock()}
   ${list.length?list.map(l=>lecCard(l,true)).join(""):`<div class="empty">لا توجد محاضرات.</div>`}`;
@@ -276,9 +313,9 @@ function render(keepFocus){
   const pos = hadFocus ? document.activeElement.selectionStart : 0;
   let html;
   if(loadError) html = `<div class="empty">${esc(loadError)}<p><button class="btn" id="retry">إعادة المحاولة</button></p></div>`;
-  else if(h.startsWith("#/s/")) html = viewSubject(decodeURIComponent(h.slice(4)));
+  else if(h.startsWith("#/s/")) html = banner() + viewSubject(decodeURIComponent(h.slice(4)));
   else if(h.startsWith("#/admin")) html = viewAdmin();
-  else html = viewHome();
+  else html = banner() + viewHome();
   $("#app").innerHTML = html;
   if(h.startsWith("#/admin") && isAdmin && !stats && !statsErr && !statsBusy) loadStats();
   if(hadFocus && $("#q")){ $("#q").focus(); try{$("#q").setSelectionRange(pos,pos)}catch(_){} }
@@ -296,6 +333,10 @@ document.addEventListener("click", async e => {
   if(t.dataset.read){ openReader(lectures.find(l=>l.id===t.dataset.read)); return; }
   if(t.dataset.edit){ editing=t.dataset.edit; render(); scrollTo(0,0); return; }
   if(t.dataset.del){ delLecture(t.dataset.del); return; }
+  if(t.dataset.anntoggle){ toggleAnn(t.dataset.anntoggle); return; }
+  if(t.dataset.anndel){ delAnn(t.dataset.anndel); return; }
+  if(t.id==="ann-close"){ try{ localStorage.setItem("lib_ann_seen", t.dataset.id); }catch(_){} render(); return; }
+  if(t.id==="ann-post"){ postAnn(); return; }
   if(t.id==="retry"){ await load(); render(); }
   if(t.id==="retryadmin"){ await checkAdmin(); render(); }
   if(t.id==="stats-reload"){ statsErr=""; stats=null; render(); }
