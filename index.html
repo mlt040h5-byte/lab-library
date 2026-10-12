@@ -145,12 +145,18 @@ async function load(){
     if(st.data){ settings = st.data; applyBg(); }
   }catch(e){ loadError = "تعذر تحميل البيانات. تأكد من الاتصال بالإنترنت ومن إعدادات الربط."; }
 }
+let adminErr = false, adminFor = null;
 async function checkAdmin(){
-  isAdmin = false;
-  if(session){
-    const r = await sb.from("admins").select("user_id").eq("user_id", session.user.id).maybeSingle();
-    isAdmin = !!r.data;
+  if(!session){ isAdmin=false; adminFor=null; adminErr=false; return; }
+  if(isAdmin && adminFor===session.user.id){ adminErr=false; return; }
+  for(let i=0;i<3;i++){
+    try{
+      const r = await sb.from("admins").select("user_id").eq("user_id", session.user.id).maybeSingle();
+      if(!r.error){ isAdmin=!!r.data; adminFor=session.user.id; adminErr=false; return; }
+    }catch(_){}
+    await new Promise(r=>setTimeout(r,900));
   }
+  adminErr = true; // فشل التحقق بسبب الاتصال، وليس لأن الحساب غير مالك
 }
 
 /* ---------- العرض ---------- */
@@ -203,6 +209,7 @@ function viewAdmin(){
    <button class="btn sec" id="sendotp">إرسال الرمز إلى بريدي</button>
    <div id="otpbox" style="display:none"><label>الرمز الذي وصلك</label><input id="otp" inputmode="numeric" autocomplete="one-time-code" dir="ltr" maxlength="10">
    <p><button class="btn" id="verifyotp">تأكيد الرمز</button></p></div></div>`;
+  if(adminErr && !isAdmin) return `<div class="panel"><h2>تعذر التحقق من الصلاحية</h2><p>المشكلة في الاتصال بالإنترنت وليست في حسابك. اضغط إعادة المحاولة.</p><button class="btn" id="retryadmin">إعادة المحاولة</button> <button class="btn sec" id="logout">تسجيل الخروج</button></div>`;
   if(!isAdmin) return `<div class="panel"><h2>غير مصرّح</h2><p>هذا الحساب ليس مالك المكتبة.</p><button class="btn sec" id="logout">تسجيل الخروج</button></div>`;
   const e = editing ? lectures.find(l=>l.id===editing) : null;
   const list = filtered();
@@ -251,6 +258,7 @@ document.addEventListener("click", async e => {
   if(t.dataset.edit){ editing=t.dataset.edit; render(); scrollTo(0,0); return; }
   if(t.dataset.del){ delLecture(t.dataset.del); return; }
   if(t.id==="retry"){ await load(); render(); }
+  if(t.id==="retryadmin"){ await checkAdmin(); render(); }
   if(t.id==="login") doLogin();
   if(t.id==="sendotp") sendOtp();
   if(t.id==="bg-save") saveBg(false);
@@ -394,7 +402,13 @@ async function init(){
   sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
   try{ settings = JSON.parse(localStorage.getItem("lib_settings")||"{}"); applyBg(); }catch(_){}
   const s = await sb.auth.getSession(); session = s.data.session; await checkAdmin();
-  sb.auth.onAuthStateChange(async (_e, sess) => { session = sess; await checkAdmin(); editing=null; render(); });
+  sb.auth.onAuthStateChange(async (ev, sess) => {
+    const prev = session && session.user ? session.user.id : null;
+    session = sess;
+    // تجديد الجلسة أو العودة من اختيار ملف لا يجب أن يعيد رسم الصفحة
+    if(ev==="TOKEN_REFRESHED" || ev==="USER_UPDATED" || (ev==="SIGNED_IN" && sess && sess.user && sess.user.id===prev)) return;
+    await checkAdmin(); editing=null; render();
+  });
   await load(); render();
   const refresh = async () => { if(busy || editing || document.hidden || $("#reader").style.display==="flex") return; const a=document.activeElement; if(a && /INPUT|TEXTAREA|SELECT/.test(a.tagName)) return; await load(); render(); };
   document.addEventListener("visibilitychange", refresh);
