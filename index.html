@@ -81,6 +81,7 @@ const SUPABASE_URL = "https://kchrvxsxfsjiryuwxsqo.supabase.co";
 const SUPABASE_KEY = "sb_publishable_JyO1ZkAVlG5Qax36chV99w_lZqlmxIH";
 /* ======================================================== */
 
+const VAPID_PUBLIC = "BE_PcrhOZhnhV8vpBpb6sTTfLlxU-YJu_7mO0XdLDNf0-yAaSTMlcq_imVBZO8OgTAQJae_63hIkI3-COc8MRzc";
 const MAX_MB = 50, BUCKET = "lectures";
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -89,7 +90,7 @@ const fmtSize = b => b ? (b/1048576).toFixed(1) + " MB" : "";
 const norm = s => String(s||"").toLowerCase().trim();
 
 let sb = null, subjects = [], lectures = [], session = null, isAdmin = false;
-let settings = {}, colorTouched = false, anns = [];
+let settings = {}, colorTouched = false, anns = [], subCount = null;
 let q = "", filter = "all", editing = null, busy = false, loadError = "";
 
 function toast(msg, type="ok"){const t=$("#toast");t.textContent=msg;t.className=type;t.style.display="block";clearTimeout(toast.t);toast.t=setTimeout(()=>t.style.display="none",type==="ok"?3500:7000)}
@@ -148,6 +149,7 @@ async function load(){
     if(st.data){ settings = st.data; applyBg(); }
     const an = await sb.from("announcements").select("*").order("created_at",{ascending:false}).limit(30);
     if(!an.error) anns = an.data || [];
+    if(isAdmin){ const c = await sb.from("push_subs").select("id",{count:"exact",head:true}); if(!c.error) subCount = c.count; }
   }catch(e){ loadError = "تعذر تحميل البيانات. تأكد من الاتصال بالإنترنت ومن إعدادات الربط."; }
 }
 let stats = null, statsErr = "", statsBusy = false;
@@ -170,6 +172,48 @@ async function logVisit(){
     if(!r.error) localStorage.setItem("lib_vlast", String(Date.now()));
   }catch(_){}
 }
+const b64u = s => { const p="=".repeat((4-s.length%4)%4), r=atob((s+p).replace(/-/g,"+").replace(/_/g,"/")); return Uint8Array.from([...r].map(c=>c.charCodeAt(0))); };
+async function enablePush(){
+  try{
+    if(!("serviceWorker" in navigator) || !("PushManager" in window)) return toast("هذا المتصفح لا يدعم الإشعارات.","err");
+    const perm = await Notification.requestPermission();
+    if(perm!=="granted"){ toast("لم يتم السماح بالإشعارات.","err"); render(); return; }
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if(!sub) sub = await reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:b64u(VAPID_PUBLIC)});
+    const j = sub.toJSON();
+    const r = await sb.from("push_subs").insert({endpoint:j.endpoint, p256dh:j.keys.p256dh, auth:j.keys.auth});
+    if(r.error && r.error.code!=="23505") throw r.error;
+    toast("تم تفعيل الإشعارات."); render();
+  }catch(e){ toast("تعذر تفعيل الإشعارات: "+(e.message||e),"err"); }
+}
+function pushCard(){
+  try{
+    if(!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) return "";
+    if(Notification.permission!=="default" || localStorage.getItem("lib_push_later")) return "";
+  }catch(_){ return ""; }
+  return `<div class="ann"><span>🔔 فعّل الإشعارات لتصلك المحاضرات والإعلانات الجديدة</span><button class="btn sm" id="enable-push">تفعيل</button><button class="btn sec sm" id="push-later">لاحقًا</button></div>`;
+}
+function pushPanel(){
+  return `<div class="panel"><h2>🔔 إرسال إشعار</h2>
+   <p class="hint">عدد الأجهزة المشتركة: ${subCount ?? "—"}</p>
+   <label>العنوان</label><input id="pn-title" maxlength="100" placeholder="مكتبة المحاضرات">
+   <label>النص</label><textarea id="pn-body" rows="2" maxlength="300" placeholder="أُضيفت محاضرة جديدة في مادة الأنسجة"></textarea>
+   <p><button class="btn" id="pn-send">إرسال الآن</button></p>
+   <p class="hint">يصل لمن فعّل الإشعارات فقط، وقد يتأخر قليلًا.</p></div>`;
+}
+async function sendPush(title, body){
+  const r = await sb.functions.invoke("send-push", {body:{title, body}});
+  if(r.error) throw new Error(r.error.message || "فشل الإرسال");
+  return r.data;
+}
+async function doPushSend(){
+  const title=$("#pn-title").value.trim() || "مكتبة المحاضرات", body=$("#pn-body").value.trim();
+  if(!body) return toast("اكتب نص الإشعار.","err");
+  if(!confirm("إرسال هذا الإشعار لكل المشتركين؟")) return;
+  try{ const d = await sendPush(title, body); toast("أُرسل إلى "+d.sent+" جهاز من "+d.total+"."); await load(); render(); }
+  catch(e){ toast("فشل الإرسال: "+e.message+" — تأكد من نشر دالة send-push","err"); }
+}
 function banner(){
   const a = anns.find(x=>x.active); if(!a) return "";
   let seen=""; try{ seen = localStorage.getItem("lib_ann_seen")||""; }catch(_){}
@@ -179,15 +223,19 @@ function banner(){
 function annPanel(){
   return `<div class="panel"><h2>📢 إعلان للطلاب</h2>
    <textarea id="ann-text" rows="2" maxlength="500" placeholder="مثال: أُضيفت محاضرات الأنسجة الجديدة"></textarea>
+   <label style="font-weight:400"><input type="checkbox" id="ann-push" style="width:auto"> أرسل كإشعار أيضًا</label>
    <p><button class="btn" id="ann-post">نشر الإعلان</button></p>
    ${anns.length ? anns.slice(0,10).map(a=>`<div class="lec" style="margin:8px 0"><div>${esc(a.message)}</div><div class="m">${fmtDate(a.created_at)} · ${a.active?"ظاهر":"مخفي"}</div><div class="acts"><button class="btn sec sm" data-anntoggle="${a.id}">${a.active?"إخفاء":"إظهار"}</button><button class="btn del sm" data-anndel="${a.id}">حذف</button></div></div>`).join("") : '<p class="hint">لا توجد إعلانات.</p>'}
    <p class="hint">يظهر أحدث إعلان ظاهر لكل طالب عند فتح المكتبة، ويختفي عنده بعد ضغط «حسنًا».</p></div>`;
 }
 async function postAnn(){
   const m=$("#ann-text").value.trim(); if(!m) return toast("اكتب نص الإعلان.","err");
+  const alsoPush=$("#ann-push") && $("#ann-push").checked;
   const r=await sb.from("announcements").insert({message:m});
   if(r.error) return toast("فشل النشر: "+r.error.message+" — تأكد من تنفيذ setup_v4.sql","err");
-  toast("تم نشر الإعلان."); await load(); render();
+  toast("تم نشر الإعلان.");
+  if(alsoPush){ try{ const d=await sendPush("📢 إعلان جديد", m); toast("نُشر الإعلان وأُرسل إشعار إلى "+d.sent+" جهاز."); }catch(e){ toast("نُشر الإعلان لكن فشل الإشعار: "+e.message,"err"); } }
+  await load(); render();
 }
 async function toggleAnn(id){
   const a=anns.find(x=>String(x.id)===String(id)); if(!a) return;
@@ -302,6 +350,7 @@ function viewAdmin(){
    <p class="hint">الصورة تُصغَّر تلقائيًا لتفتح بسرعة. إن اخترتَ صورة فإنها تُقدَّم على اللون.</p>
    <p><button class="btn" id="bg-save" ${busy?"disabled":""}>حفظ المظهر</button> <button class="btn sec" id="bg-reset">إعادة الافتراضي</button></p></div>
   ${annPanel()}
+  ${pushPanel()}
   ${statsPanel()}
   <h2>كل المحاضرات (${lectures.length})</h2>${searchBlock()}
   ${list.length?list.map(l=>lecCard(l,true)).join(""):`<div class="empty">لا توجد محاضرات.</div>`}`;
@@ -313,9 +362,9 @@ function render(keepFocus){
   const pos = hadFocus ? document.activeElement.selectionStart : 0;
   let html;
   if(loadError) html = `<div class="empty">${esc(loadError)}<p><button class="btn" id="retry">إعادة المحاولة</button></p></div>`;
-  else if(h.startsWith("#/s/")) html = banner() + viewSubject(decodeURIComponent(h.slice(4)));
+  else if(h.startsWith("#/s/")) html = banner() + pushCard() + viewSubject(decodeURIComponent(h.slice(4)));
   else if(h.startsWith("#/admin")) html = viewAdmin();
-  else html = banner() + viewHome();
+  else html = banner() + pushCard() + viewHome();
   $("#app").innerHTML = html;
   if(h.startsWith("#/admin") && isAdmin && !stats && !statsErr && !statsBusy) loadStats();
   if(hadFocus && $("#q")){ $("#q").focus(); try{$("#q").setSelectionRange(pos,pos)}catch(_){} }
@@ -337,6 +386,9 @@ document.addEventListener("click", async e => {
   if(t.dataset.anndel){ delAnn(t.dataset.anndel); return; }
   if(t.id==="ann-close"){ try{ localStorage.setItem("lib_ann_seen", t.dataset.id); }catch(_){} render(); return; }
   if(t.id==="ann-post"){ postAnn(); return; }
+  if(t.id==="enable-push"){ enablePush(); return; }
+  if(t.id==="push-later"){ try{ localStorage.setItem("lib_push_later","1"); }catch(_){} render(); return; }
+  if(t.id==="pn-send"){ doPushSend(); return; }
   if(t.id==="retry"){ await load(); render(); }
   if(t.id==="retryadmin"){ await checkAdmin(); render(); }
   if(t.id==="stats-reload"){ statsErr=""; stats=null; render(); }
@@ -488,7 +540,7 @@ async function init(){
     session = sess;
     // تجديد الجلسة أو العودة من اختيار ملف لا يجب أن يعيد رسم الصفحة
     if(ev==="TOKEN_REFRESHED" || ev==="USER_UPDATED" || (ev==="SIGNED_IN" && sess && sess.user && sess.user.id===prev)) return;
-    await checkAdmin(); editing=null; render();
+    await checkAdmin(); editing=null; if(isAdmin) await load(); render();
   });
   await load(); render(); logVisit();
   const refresh = async () => { if(busy || editing || document.hidden || $("#reader").style.display==="flex") return; const a=document.activeElement; if(a && /INPUT|TEXTAREA|SELECT/.test(a.tagName)) return; await load(); render(); };
@@ -499,4 +551,4 @@ init();
 if('serviceWorker' in navigator) addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
 </script>
 </body>
-</html>
+  </html>
