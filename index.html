@@ -218,9 +218,7 @@ async function doPushSend(){
 function needName(h){ try{ return !localStorage.getItem("lib_name") && !session && !h.startsWith("#/admin"); }catch(_){ return false; } }
 function welcomeView(){
   return `<div class="panel"><h2>👋 أهلًا بك في المكتبة</h2>
-   <p>اكتب اسمك الثلاثي للدخول.</p>
-   <label>الاسم</label><input id="stu-name" maxlength="60" autocomplete="name" placeholder="مثال: أحمد محمد علي">
-   <p class="hint">يُحفظ اسمك عند مالك المكتبة فقط، لمعرفة من يستخدمها.</p>
+   <label>الاسم</label><input id="stu-name" maxlength="60" autocomplete="name">
    <p><button class="btn" id="stu-enter">دخول</button></p></div>`;
 }
 async function registerStudent(){
@@ -607,4 +605,4 @@ if('serviceWorker' in navigator) addEventListener('load',()=>navigator.serviceWo
 </script>
 <script data-gabster-widget src="https://widget.gabster.ai/loader?cbid=6acfe0f5449b0dc12d44a813" data-embed-type="widget"></script>
 </body>
-  </html>
+</html>
