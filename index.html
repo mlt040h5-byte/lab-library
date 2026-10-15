@@ -71,7 +71,7 @@ footer{text-align:center;color:var(--mute);font-size:.8rem;padding:20px}
 <body>
 <header><div class="in"><h1><a href="#/" style="color:#fff;text-decoration:none">📚 مكتبة محاضرات تقنيات المختبرات الطبية</a></h1><p>المرحلة الثانية</p></div></header>
 <main id="app"><div class="empty">جارٍ التحميل…</div></main>
-<footer><a href="#/admin">دخول المالك</a></footer>
+<footer><a href="#/me">حسابي</a> · <a href="#/admin">دخول المالك</a></footer>
 <div id="toast"></div>
 <div id="reader"><div class="top"><button class="btn sec sm" id="rclose">إغلاق ✕</button><span id="rtitle"></span><a class="btn sec sm" id="rdl">تنزيل</a></div><div id="pages"></div></div>
 
@@ -327,7 +327,7 @@ async function studentLogin(){
   }
 
   try { localStorage.setItem("lib_name", username); } catch (_) {}
-  render();
+  location.hash = "#/me"; render();
   toast("تم تسجيل الدخول بنجاح.");
 }
 
@@ -516,6 +516,7 @@ function lecCard(l, admin){
   <div class="acts">
    <button class="btn sm" data-read="${l.id}">📖 قراءة</button>
    <a class="btn sec sm" href="${fileUrl(l.file_path,true)}" download>⬇ تنزيل</a>
+   ${typeof studentActs==="function"?studentActs(l):""}
    ${admin?`<button class="btn sec sm" data-edit="${l.id}">✏ تعديل</button><button class="btn del sm" data-del="${l.id}">🗑 حذف</button>`:""}
   </div></div>`;
 }
@@ -593,8 +594,10 @@ function render(keepFocus){
   else if(loadError) html = `<div class="empty">${esc(loadError)}<p><button class="btn" id="retry">إعادة المحاولة</button></p></div>`;
   else if(h.startsWith("#/s/")) html = banner() + pushCard() + viewSubject(decodeURIComponent(h.slice(4)));
   else if(h.startsWith("#/admin")) html = viewAdmin();
+  else if(h.startsWith("#/me") && typeof viewMe==="function") html = viewMe();
   else html = banner() + pushCard() + viewHome();
   $("#app").innerHTML = html;
+  if(typeof stEnsure==="function") stEnsure();
   if(h.startsWith("#/admin") && isAdmin && !stats && !statsErr && !statsBusy) loadStats();
   if(h.startsWith("#/admin") && isAdmin && !studs && !studsErr && !studsBusy) loadStuds();
   if(fid && $("#"+fid)){ $("#"+fid).focus(); try{$("#"+fid).setSelectionRange(pos,pos)}catch(_){} }
@@ -797,6 +800,7 @@ function loadPdfJs(){
 let readerToken=0;
 async function openReader(l){
   if(!l) return;
+  if(typeof onOpenLecture==="function") onOpenLecture(l);
   const tok=++readerToken, box=$("#pages");
   $("#reader").style.display="flex"; $("#rtitle").textContent=l.title; $("#rdl").href=fileUrl(l.file_path,true);
   box.innerHTML='<p style="color:#fff">جارٍ فتح الملف…</p>'; document.body.style.overflow="hidden";
@@ -854,6 +858,59 @@ async function init(){
 init();
 if('serviceWorker' in navigator) addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
 </script>
-<script data-gabster-widget src="https://widget.gabster.ai/loader?cbid=6acfe0f5449b0dc12d44a813" data-embed-type="widget"></script>
-</body>
-</html>
+
+<script>
+/* ===== الدفعة 1: حساب الطالب + متابعة الدراسة + الملاحظات + الإعدادات ===== */
+const st = {uid:null, loaded:false, err:"", prof:null, prog:new Map(), notes:[], tab:"home", edit:null, nq:"", saving:false, again:false, timer:null};
+const isStudent = () => !!session && !isAdmin;
+const stLec = id => lectures.find(l => l.id === id);
+const stUser = () => ((session && session.user && session.user.email) || "").split("@")[0];
+function stReset(){ st.uid=null; st.loaded=false; st.err=""; st.prof=null; st.prog=new Map(); st.notes=[]; st.tab="home"; st.edit=null; }
+async function stEnsure(){
+  if(!isStudent()){ if(st.uid) stReset(); return; }
+  if(st.uid === session.user.id) return;
+  st.uid = session.user.id; st.loaded = false; st.err = "";
+  try{
+    const [p,g,n] = await Promise.all([
+      sb.from("profiles").select("*").eq("user_id", st.uid).maybeSingle(),
+      sb.from("study_progress").select("*").eq("user_id", st.uid),
+      sb.from("notes").select("*").eq("user_id", st.uid).order("updated_at", {ascending:false})
+    ]);
+    if(p.error) throw p.error; if(g.error) throw g.error; if(n.error) throw n.error;
+    st.prof = p.data; st.prog = new Map((g.data||[]).map(r => [r.lecture_id, r])); st.notes = n.data || []; st.loaded = true;
+  }catch(e){ st.err = "تعذر تحميل بياناتك. تحقق من الاتصال ثم أعد المحاولة."; }
+  render();
+}
+async function stSet(lid, patch, silent){
+  const old = st.prog.get(lid), now = new Date().toISOString();
+  st.prog.set(lid, {...(old || {user_id:st.uid, lecture_id:lid, completed:false, favorite:false, saved:false}), ...patch, updated_at:now});
+  if(!silent) render();
+  const r = await sb.from("study_progress").upsert({user_id:st.uid, lecture_id:lid, ...patch, updated_at:now}, {onConflict:"user_id,lecture_id"});
+  if(r.error){
+    if(old) st.prog.set(lid, old); else st.prog.delete(lid);
+    if(!silent){ toast("تعذر الحفظ. تحقق من الاتصال وحاول مرة أخرى.", "err"); render(); }
+    return false;
+  }
+  return true;
+}
+function onOpenLecture(l){ if(isStudent() && st.loaded) stSet(l.id, {last_opened_at:new Date().toISOString()}, true); }
+function studentActs(l){
+  if(!isStudent() || !st.loaded) return "";
+  const p = st.prog.get(l.id) || {};
+  const b = (k, on, label) => `<button class="btn ${on ? "" : "sec"} sm" data-st="${k}" data-id="${l.id}" aria-pressed="${!!on}">${label}</button>`;
+  return b("done", p.completed, p.completed ? "✅ مكتملة" : "☑ إكمال") + b("fav", p.favorite, p.favorite ? "⭐ مفضلة" : "☆ مفضلة") +
+         b("save", p.saved, p.saved ? "🔖 للمراجعة" : "🔖 مراجعة لاحقًا") + b("note", false, "📝 ملاحظة");
+}
+function stNoteStatus(m){ const s = $("#st-n-status"); if(s) s.textContent = m; }
+function stSchedule(){ clearTimeout(st.timer); stNoteStatus("…"); st.timer = setTimeout(stSaveNote, 800); }
+async function stSaveNote(){
+  const e = st.edit; if(!e || !$("#st-n-body")) return;
+  if(st.saving){ st.again = true; return; }
+  const title = $("#st-n-title").value.trim(), body = $("#st-n-body").value, lid = $("#st-n-lec").value || null;
+  let sid = $("#st-n-subj").value || null; if(lid){ const l = stLec(lid); if(l) sid = l.subject_id; }
+  if(!title && !body.trim()) return;
+  st.saving = true; stNoteStatus("جارٍ الحفظ…");
+  try{
+    const row = {title, body, subject_id:sid, lecture_id:lid};
+    const r = e.id ? await sb.from("notes").update(row).eq("id", e.id).select().single()
+                   : await sb.from("notes").insert({user_id:st.uid, ...row
