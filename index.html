@@ -380,13 +380,13 @@ async function studentRegister(){
 async function studentRecover(){
   const username = getStudentUsername();
   const recoveryCode =
-    (document.getElementById("stu-recovery-code")?.value || "").trim();
+    (document.getElementById("stu-recovery-code")?.value || "").trim().toLowerCase();
   const newPassword =
     document.getElementById("stu-new-password")?.value || "";
 
   if(
     !/^[A-Za-z0-9_.-]{3,32}$/.test(username) ||
-    !/^[a-f0-9]{64}$/i.test(recoveryCode) ||
+    !/^[a-f0-9]{64}$/.test(recoveryCode) ||
     newPassword.length < 10 ||
     newPassword.length > 128
   ){
@@ -394,15 +394,29 @@ async function studentRecover(){
   }
 
   try {
-    await callStudentAccounts({
+    const data = await callStudentAccounts({
       action: "recover",
       username,
       recovery_code: recoveryCode,
       new_password: newPassword
     });
 
-    studentAuthRender("login");
-    toast("تم تغيير كلمة المرور. سجّل الدخول بها الآن.");
+    const box = document.getElementById("student-auth-form");
+
+    if(data.recovery_code && box){
+      // الرمز القديم استُهلك؛ نعرض الرمز الجديد مرة واحدة
+      box.innerHTML = `
+        <h3>تم تغيير كلمة المرور</h3>
+        <p><strong>هذا رمز الاستعادة الجديد. الرمز القديم لم يعد صالحًا، فاحفظ الجديد الآن؛ لن يظهر مرة أخرى.</strong></p>
+        <textarea id="new-recovery-code" rows="4" readonly dir="ltr">${esc(data.recovery_code)}</textarea>
+        <p><button class="btn" id="copy-recovery-code">نسخ رمز الاستعادة</button></p>
+        <p class="hint">احتفظ بالرمز في مكان آمن. من يملكه يستطيع محاولة إعادة تعيين كلمة مرور الحساب.</p>
+        <p><button class="btn sec" id="student-back-login">العودة إلى تسجيل الدخول</button></p>`;
+      toast("تم تغيير كلمة المرور. احفظ رمز الاستعادة الجديد.");
+    } else {
+      studentAuthRender("login");
+      toast("تم تغيير كلمة المرور. سجّل الدخول بها الآن.");
+    }
   } catch(error) {
     toast(error.message || "تعذرت استعادة الحساب.", "err");
   }
@@ -423,7 +437,7 @@ function studsPanel(){
   const list = studs.filter(x => !studQ || norm(x.student_name).includes(norm(studQ)));
   return `<div class="panel"><h2>👥 الطلاب المسجلون (${studs.length})</h2>
    <div class="bar"><input id="stud-q" type="search" placeholder="🔎 ابحث عن اسم…" value="${esc(studQ)}"></div>
-   ${list.length ? list.map(x=>`<div class="lec" style="margin:6px 0;padding:10px"><b>${esc(x.student_name)}</b><div class="m">آخر دخول: ${fmtDate(x.last_seen)} · مرات الدخول: ${x.opens}</div></div>`).join("") : '<p class="hint">لا توجد أسماء مطابقة.</p>'}
+   ${list.length ? list.map(x=>`<div class="lec" style="margin:6px 0;padding:10px"><b>${esc(x.student_name)}</b><div class="m">آخر دخول: ${fmtDate(x.last_seen)}${x.opens>0 ? " · مرات الدخول: "+x.opens : ""}</div></div>`).join("") : '<p class="hint">لا توجد أسماء مطابقة.</p>'}
    <p><button class="btn sec sm" id="stud-copy">نسخ كل الأسماء</button> <button class="btn sec sm" id="stud-reload">تحديث</button></p>
    <p class="hint">الاسم يكتبه الطالب بنفسه ولا يُتحقق منه، فقد يكتب اسمًا غير حقيقي أو مكررًا.</p></div>`;
 }
@@ -842,4 +856,4 @@ if('serviceWorker' in navigator) addEventListener('load',()=>navigator.serviceWo
 </script>
 <script data-gabster-widget src="https://widget.gabster.ai/loader?cbid=6acfe0f5449b0dc12d44a813" data-embed-type="widget"></script>
 </body>
-  </html>
+</html>
