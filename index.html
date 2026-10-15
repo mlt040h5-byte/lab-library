@@ -91,6 +91,7 @@ const norm = s => String(s||"").toLowerCase().trim();
 
 let sb = null, subjects = [], lectures = [], session = null, isAdmin = false;
 let settings = {}, colorTouched = false, anns = [], subCount = null;
+let studs = null, studsErr = "", studsBusy = false, studQ = "";
 let q = "", filter = "all", editing = null, busy = false, loadError = "";
 
 function toast(msg, type="ok"){const t=$("#toast");t.textContent=msg;t.className=type;t.style.display="block";clearTimeout(toast.t);toast.t=setTimeout(()=>t.style.display="none",type==="ok"?3500:7000)}
@@ -169,7 +170,7 @@ async function logVisit(){
     if(!id){ id = crypto.randomUUID(); localStorage.setItem("lib_vid", id); }
     if(Date.now() - (+localStorage.getItem("lib_vlast")||0) < 30*60*1000) return;
     const r = await sb.from("visits").insert({visitor:id});
-    if(!r.error) localStorage.setItem("lib_vlast", String(Date.now()));
+    if(!r.error){ localStorage.setItem("lib_vlast", String(Date.now())); await registerStudent(); }
   }catch(_){}
 }
 const b64u = s => { const p="=".repeat((4-s.length%4)%4), r=atob((s+p).replace(/-/g,"+").replace(/_/g,"/")); return Uint8Array.from([...r].map(c=>c.charCodeAt(0))); };
@@ -213,6 +214,47 @@ async function doPushSend(){
   if(!confirm("إرسال هذا الإشعار لكل المشتركين؟")) return;
   try{ const d = await sendPush(title, body); toast("أُرسل إلى "+d.sent+" جهاز من "+d.total+"."); await load(); render(); }
   catch(e){ toast("فشل الإرسال: "+e.message+" — تأكد من نشر دالة send-push","err"); }
+}
+function needName(h){ try{ return !localStorage.getItem("lib_name") && !session && !h.startsWith("#/admin"); }catch(_){ return false; } }
+function welcomeView(){
+  return `<div class="panel"><h2>👋 أهلًا بك في المكتبة</h2>
+   <p>اكتب اسمك الثلاثي للدخول.</p>
+   <label>الاسم</label><input id="stu-name" maxlength="60" autocomplete="name" placeholder="مثال: أحمد محمد علي">
+   <p class="hint">يُحفظ اسمك عند مالك المكتبة فقط، لمعرفة من يستخدمها.</p>
+   <p><button class="btn" id="stu-enter">دخول</button></p></div>`;
+}
+async function registerStudent(){
+  try{
+    const n = localStorage.getItem("lib_name"); if(!n) return;
+    let id = localStorage.getItem("lib_vid"); if(!id){ id = crypto.randomUUID(); localStorage.setItem("lib_vid", id); }
+    const r = await sb.rpc("register_student", {p_visitor:id, p_name:n});
+    if(!r.error) localStorage.setItem("lib_synced", n);
+  }catch(_){}
+}
+async function enterName(){
+  const n = ($("#stu-name").value || "").replace(/\s+/g," ").trim();
+  if(n.length < 3) return toast("اكتب اسمك (3 أحرف على الأقل).","err");
+  try{ localStorage.setItem("lib_name", n); }catch(_){ return toast("تعذر حفظ الاسم، فعّل التخزين في المتصفح.","err"); }
+  await registerStudent(); render();
+}
+async function loadStuds(){
+  if(studsBusy) return; studsBusy = true;
+  try{
+    const r = await sb.rpc("list_students");
+    if(r.error){ studs=null; studsErr="تعذر تحميل الأسماء. تأكد من تنفيذ ملف setup_v6.sql ("+r.error.message+")"; }
+    else { studs = r.data || []; studsErr=""; }
+  }catch(e){ studs=null; studsErr="تعذر تحميل الأسماء."; }
+  studsBusy = false; render();
+}
+function studsPanel(){
+  if(studsErr) return `<div class="panel"><h2>👥 الطلاب المسجلون</h2><p class="hint">${esc(studsErr)}</p><button class="btn sec sm" id="stud-reload">إعادة المحاولة</button></div>`;
+  if(!studs) return `<div class="panel"><h2>👥 الطلاب المسجلون</h2><p class="hint">جارٍ التحميل…</p></div>`;
+  const list = studs.filter(x => !studQ || norm(x.student_name).includes(norm(studQ)));
+  return `<div class="panel"><h2>👥 الطلاب المسجلون (${studs.length})</h2>
+   <div class="bar"><input id="stud-q" type="search" placeholder="🔎 ابحث عن اسم…" value="${esc(studQ)}"></div>
+   ${list.length ? list.map(x=>`<div class="lec" style="margin:6px 0;padding:10px"><b>${esc(x.student_name)}</b><div class="m">آخر دخول: ${fmtDate(x.last_seen)} · مرات الدخول: ${x.opens}</div></div>`).join("") : '<p class="hint">لا توجد أسماء مطابقة.</p>'}
+   <p><button class="btn sec sm" id="stud-copy">نسخ كل الأسماء</button> <button class="btn sec sm" id="stud-reload">تحديث</button></p>
+   <p class="hint">الاسم يكتبه الطالب بنفسه ولا يُتحقق منه، فقد يكتب اسمًا غير حقيقي أو مكررًا.</p></div>`;
 }
 function banner(){
   const a = anns.find(x=>x.active); if(!a) return "";
@@ -351,6 +393,7 @@ function viewAdmin(){
    <p><button class="btn" id="bg-save" ${busy?"disabled":""}>حفظ المظهر</button> <button class="btn sec" id="bg-reset">إعادة الافتراضي</button></p></div>
   ${annPanel()}
   ${pushPanel()}
+  ${studsPanel()}
   ${statsPanel()}
   <h2>كل المحاضرات (${lectures.length})</h2>${searchBlock()}
   ${list.length?list.map(l=>lecCard(l,true)).join(""):`<div class="empty">لا توجد محاضرات.</div>`}`;
@@ -358,21 +401,24 @@ function viewAdmin(){
 
 function render(keepFocus){
   const h = location.hash || "#/";
-  const hadFocus = document.activeElement && document.activeElement.id === "q";
-  const pos = hadFocus ? document.activeElement.selectionStart : 0;
+  const fid = document.activeElement && (document.activeElement.id==="q" || document.activeElement.id==="stud-q") ? document.activeElement.id : null;
+  const pos = fid ? document.activeElement.selectionStart : 0;
   let html;
-  if(loadError) html = `<div class="empty">${esc(loadError)}<p><button class="btn" id="retry">إعادة المحاولة</button></p></div>`;
+  if(needName(h)) html = welcomeView();
+  else if(loadError) html = `<div class="empty">${esc(loadError)}<p><button class="btn" id="retry">إعادة المحاولة</button></p></div>`;
   else if(h.startsWith("#/s/")) html = banner() + pushCard() + viewSubject(decodeURIComponent(h.slice(4)));
   else if(h.startsWith("#/admin")) html = viewAdmin();
   else html = banner() + pushCard() + viewHome();
   $("#app").innerHTML = html;
   if(h.startsWith("#/admin") && isAdmin && !stats && !statsErr && !statsBusy) loadStats();
-  if(hadFocus && $("#q")){ $("#q").focus(); try{$("#q").setSelectionRange(pos,pos)}catch(_){} }
+  if(h.startsWith("#/admin") && isAdmin && !studs && !studsErr && !studsBusy) loadStuds();
+  if(fid && $("#"+fid)){ $("#"+fid).focus(); try{$("#"+fid).setSelectionRange(pos,pos)}catch(_){} }
 }
 
 /* ---------- الأحداث ---------- */
 document.addEventListener("input", e => {
   if(e.target.id==="q"){ q=e.target.value; render(); }
+  else if(e.target.id==="stud-q"){ studQ=e.target.value; render(); }
   else if(e.target.id==="bg-color") colorTouched=true;
   else if(e.target.id==="bg-dim") $("#dimv").textContent=e.target.value;
 });
@@ -389,6 +435,13 @@ document.addEventListener("click", async e => {
   if(t.id==="enable-push"){ enablePush(); return; }
   if(t.id==="push-later"){ try{ localStorage.setItem("lib_push_later","1"); }catch(_){} render(); return; }
   if(t.id==="pn-send"){ doPushSend(); return; }
+  if(t.id==="stu-enter"){ enterName(); return; }
+  if(t.id==="stud-reload"){ studsErr=""; studs=null; render(); return; }
+  if(t.id==="stud-copy"){
+    try{ await navigator.clipboard.writeText((studs||[]).map(x=>x.student_name).join("\n")); toast("تم نسخ الأسماء."); }
+    catch(_){ toast("تعذر النسخ تلقائيًا.","err"); }
+    return;
+  }
   if(t.id==="retry"){ await load(); render(); }
   if(t.id==="retryadmin"){ await checkAdmin(); render(); }
   if(t.id==="stats-reload"){ statsErr=""; stats=null; render(); }
@@ -401,6 +454,7 @@ document.addEventListener("click", async e => {
   if(t.id==="save") saveLecture();
   if(t.id==="cancel"){ editing=null; render(); }
 });
+document.addEventListener("keydown", e => { if(e.key==="Enter" && e.target.id==="stu-name") enterName(); });
 window.addEventListener("hashchange", () => { q=""; filter="all"; render(); scrollTo(0,0); });
 
 async function doLogin(){
@@ -543,6 +597,7 @@ async function init(){
     await checkAdmin(); editing=null; if(isAdmin) await load(); render();
   });
   await load(); render(); logVisit();
+  try{ if(!isAdmin && localStorage.getItem("lib_name") && localStorage.getItem("lib_synced")!==localStorage.getItem("lib_name")) registerStudent(); }catch(_){}
   const refresh = async () => { if(busy || editing || document.hidden || $("#reader").style.display==="flex") return; const a=document.activeElement; if(a && /INPUT|TEXTAREA|SELECT/.test(a.tagName)) return; await load(); render(); };
   document.addEventListener("visibilitychange", refresh);
   setInterval(refresh, 90000);
@@ -552,4 +607,4 @@ if('serviceWorker' in navigator) addEventListener('load',()=>navigator.serviceWo
 </script>
 <script data-gabster-widget src="https://widget.gabster.ai/loader?cbid=6acfe0f5449b0dc12d44a813" data-embed-type="widget"></script>
 </body>
-</html>
+  </html>
