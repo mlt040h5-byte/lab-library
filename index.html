@@ -216,11 +216,26 @@ async function doPushSend(){
   catch(e){ toast("فشل الإرسال: "+e.message+" — تأكد من نشر دالة send-push","err"); }
 }
 function needName(h){ try{ return !localStorage.getItem("lib_name") && !session && !h.startsWith("#/admin"); }catch(_){ return false; } }
+
 function welcomeView(){
-  return `<div class="panel"><h2>👋 أهلًا بك في المكتبة</h2>
-   <label>الاسم</label><input id="stu-name" maxlength="60" autocomplete="name">
-   <p><button class="btn" id="stu-enter">دخول</button></p></div>`;
+  return `<div class="panel">
+    <h2>حساب الطالب</h2>
+    <p class="hint">سجّل الدخول أو أنشئ حسابًا جديدًا. لا تحتاج إلى بريد إلكتروني.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0">
+      <button class="btn sec" id="student-tab-login">تسجيل الدخول</button>
+      <button class="btn sec" id="student-tab-register">إنشاء حساب</button>
+      <button class="btn sec" id="student-tab-recover">استعادة الحساب</button>
+    </div>
+    <div id="student-auth-form">
+      <label>اسم المستخدم</label>
+      <input id="stu-username" maxlength="32" autocomplete="username" dir="ltr">
+      <label>كلمة المرور</label>
+      <input id="stu-password" type="password" maxlength="128" autocomplete="current-password" dir="ltr">
+      <p><button class="btn" id="stu-login">دخول</button></p>
+    </div>
+  </div>`;
 }
+
 async function registerStudent(){
   try{
     const n = localStorage.getItem("lib_name"); if(!n) return;
@@ -229,12 +244,184 @@ async function registerStudent(){
     if(!r.error) localStorage.setItem("lib_synced", n);
   }catch(_){}
 }
-async function enterName(){
-  const n = ($("#stu-name").value || "").replace(/\s+/g," ").trim();
-  if(n.length < 3) return toast("اكتب اسمك (3 أحرف على الأقل).","err");
-  try{ localStorage.setItem("lib_name", n); }catch(_){ return toast("تعذر حفظ الاسم، فعّل التخزين في المتصفح.","err"); }
-  await registerStudent(); render();
+
+let studentAuthMode = "login";
+
+function studentAuthRender(mode){
+  studentAuthMode = mode;
+  const box = document.getElementById("student-auth-form");
+  if(!box) return;
+
+  if(mode === "register"){
+    box.innerHTML = `
+      <label>اسم المستخدم (3–32 حرفًا إنجليزيًا أو رقمًا أو . _ -)</label>
+      <input id="stu-username" maxlength="32" autocomplete="username" dir="ltr">
+      <label>الاسم الظاهر</label>
+      <input id="stu-display-name" maxlength="60" autocomplete="name">
+      <label>كلمة المرور (10 أحرف على الأقل)</label>
+      <input id="stu-password" type="password" maxlength="128" autocomplete="new-password" dir="ltr">
+      <p><button class="btn" id="stu-register">إنشاء الحساب</button></p>`;
+  } else if(mode === "recover"){
+    box.innerHTML = `
+      <label>اسم المستخدم</label>
+      <input id="stu-username" maxlength="32" autocomplete="username" dir="ltr">
+      <label>رمز الاستعادة السري</label>
+      <input id="stu-recovery-code" maxlength="64" autocomplete="off" dir="ltr">
+      <label>كلمة المرور الجديدة (10 أحرف على الأقل)</label>
+      <input id="stu-new-password" type="password" maxlength="128" autocomplete="new-password" dir="ltr">
+      <p><button class="btn" id="stu-recover">تغيير كلمة المرور</button></p>`;
+  } else {
+    box.innerHTML = `
+      <label>اسم المستخدم</label>
+      <input id="stu-username" maxlength="32" autocomplete="username" dir="ltr">
+      <label>كلمة المرور</label>
+      <input id="stu-password" type="password" maxlength="128" autocomplete="current-password" dir="ltr">
+      <p><button class="btn" id="stu-login">دخول</button></p>`;
+  }
 }
+
+async function callStudentAccounts(payload){
+  const response = await fetch(
+    SUPABASE_URL + "/functions/v1/student-accounts",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "apikey": SUPABASE_KEY,
+        "Authorization": "Bearer " + SUPABASE_KEY
+      },
+      body: JSON.stringify(payload)
+    }
+  );
+
+  let data = {};
+  try { data = await response.json(); } catch (_) {}
+
+  if(!response.ok || data.error){
+    throw new Error(data.error || "تعذر إكمال العملية. حاول مرة أخرى.");
+  }
+
+  return data;
+}
+
+function getStudentUsername(){
+  return (document.getElementById("stu-username")?.value || "")
+    .trim().toLowerCase();
+}
+
+async function studentLogin(){
+  const username = getStudentUsername();
+  const password = document.getElementById("stu-password")?.value || "";
+
+  if(!/^[A-Za-z0-9_.-]{3,32}$/.test(username) || !password){
+    return toast("أدخل اسم المستخدم وكلمة المرور بشكل صحيح.", "err");
+  }
+
+  const {error} = await sb.auth.signInWithPassword({
+    email: username + "@students.invalid",
+    password
+  });
+
+  if(error){
+    return toast("تعذر الدخول. تحقق من اسم المستخدم وكلمة المرور.", "err");
+  }
+
+  try { localStorage.setItem("lib_name", username); } catch (_) {}
+  render();
+  toast("تم تسجيل الدخول بنجاح.");
+}
+
+async function studentRegister(){
+  const username = getStudentUsername();
+  const displayName =
+    (document.getElementById("stu-display-name")?.value || "").trim();
+  const password = document.getElementById("stu-password")?.value || "";
+
+  if(!/^[A-Za-z0-9_.-]{3,32}$/.test(username)){
+    return toast("اسم المستخدم غير صالح. استخدم 3–32 حرفًا إنجليزيًا أو رقمًا أو . _ -", "err");
+  }
+
+  if(!displayName || displayName.length > 60){
+    return toast("اكتب الاسم الظاهر، بحد أقصى 60 حرفًا.", "err");
+  }
+
+  if(password.length < 10 || password.length > 128){
+    return toast("كلمة المرور يجب أن تكون بين 10 و128 حرفًا.", "err");
+  }
+
+  try {
+    const data = await callStudentAccounts({
+      action: "register",
+      username,
+      display_name: displayName,
+      password
+    });
+
+    // لا نسجّل الدخول تلقائيًا؛ يجب إظهار رمز الاستعادة أولًا.
+    const box = document.getElementById("student-auth-form");
+
+    if(box){
+      box.innerHTML = `
+        <h3>تم إنشاء الحساب بنجاح</h3>
+        <p>اسم المستخدم: <b dir="ltr">${esc(data.username)}</b></p>
+        <p><strong>احفظ رمز الاستعادة الآن؛ لن يظهر مرة أخرى.</strong></p>
+        <textarea id="new-recovery-code" rows="4" readonly dir="ltr">${esc(data.recovery_code)}</textarea>
+        <p><button class="btn" id="copy-recovery-code">نسخ رمز الاستعادة</button></p>
+        <p class="hint">احتفظ بالرمز في مكان آمن. من يملكه يستطيع محاولة إعادة تعيين كلمة مرور الحساب.</p>
+        <p><button class="btn sec" id="student-back-login">العودة إلى تسجيل الدخول</button></p>`;
+    }
+
+    toast("تم إنشاء الحساب. احفظ رمز الاستعادة في مكان آمن.");
+  } catch(error) {
+    toast(error.message || "تعذر إنشاء الحساب.", "err");
+  }
+}
+
+async function studentRecover(){
+  const username = getStudentUsername();
+  const recoveryCode =
+    (document.getElementById("stu-recovery-code")?.value || "").trim().toLowerCase();
+  const newPassword =
+    document.getElementById("stu-new-password")?.value || "";
+
+  if(
+    !/^[A-Za-z0-9_.-]{3,32}$/.test(username) ||
+    !/^[a-f0-9]{64}$/.test(recoveryCode) ||
+    newPassword.length < 10 ||
+    newPassword.length > 128
+  ){
+    return toast("تحقق من اسم المستخدم ورمز الاستعادة وكلمة المرور الجديدة.", "err");
+  }
+
+  try {
+    const data = await callStudentAccounts({
+      action: "recover",
+      username,
+      recovery_code: recoveryCode,
+      new_password: newPassword
+    });
+
+    const box = document.getElementById("student-auth-form");
+
+    if(data.recovery_code && box){
+      // الرمز القديم استُهلك؛ نعرض الرمز الجديد مرة واحدة
+      box.innerHTML = `
+        <h3>تم تغيير كلمة المرور</h3>
+        <p><strong>هذا رمز الاستعادة الجديد. الرمز القديم لم يعد صالحًا، فاحفظ الجديد الآن؛ لن يظهر مرة أخرى.</strong></p>
+        <textarea id="new-recovery-code" rows="4" readonly dir="ltr">${esc(data.recovery_code)}</textarea>
+        <p><button class="btn" id="copy-recovery-code">نسخ رمز الاستعادة</button></p>
+        <p class="hint">احتفظ بالرمز في مكان آمن. من يملكه يستطيع محاولة إعادة تعيين كلمة مرور الحساب.</p>
+        <p><button class="btn sec" id="student-back-login">العودة إلى تسجيل الدخول</button></p>`;
+      toast("تم تغيير كلمة المرور. احفظ رمز الاستعادة الجديد.");
+    } else {
+      studentAuthRender("login");
+      toast("تم تغيير كلمة المرور. سجّل الدخول بها الآن.");
+    }
+  } catch(error) {
+    toast(error.message || "تعذرت استعادة الحساب.", "err");
+  }
+}
+
 async function loadStuds(){
   if(studsBusy) return; studsBusy = true;
   try{
@@ -250,7 +437,7 @@ function studsPanel(){
   const list = studs.filter(x => !studQ || norm(x.student_name).includes(norm(studQ)));
   return `<div class="panel"><h2>👥 الطلاب المسجلون (${studs.length})</h2>
    <div class="bar"><input id="stud-q" type="search" placeholder="🔎 ابحث عن اسم…" value="${esc(studQ)}"></div>
-   ${list.length ? list.map(x=>`<div class="lec" style="margin:6px 0;padding:10px"><b>${esc(x.student_name)}</b><div class="m">آخر دخول: ${fmtDate(x.last_seen)} · مرات الدخول: ${x.opens}</div></div>`).join("") : '<p class="hint">لا توجد أسماء مطابقة.</p>'}
+   ${list.length ? list.map(x=>`<div class="lec" style="margin:6px 0;padding:10px"><b>${esc(x.student_name)}</b><div class="m">آخر دخول: ${fmtDate(x.last_seen)}${x.opens>0 ? " · مرات الدخول: "+x.opens : ""}</div></div>`).join("") : '<p class="hint">لا توجد أسماء مطابقة.</p>'}
    <p><button class="btn sec sm" id="stud-copy">نسخ كل الأسماء</button> <button class="btn sec sm" id="stud-reload">تحديث</button></p>
    <p class="hint">الاسم يكتبه الطالب بنفسه ولا يُتحقق منه، فقد يكتب اسمًا غير حقيقي أو مكررًا.</p></div>`;
 }
@@ -433,7 +620,46 @@ document.addEventListener("click", async e => {
   if(t.id==="enable-push"){ enablePush(); return; }
   if(t.id==="push-later"){ try{ localStorage.setItem("lib_push_later","1"); }catch(_){} render(); return; }
   if(t.id==="pn-send"){ doPushSend(); return; }
-  if(t.id==="stu-enter"){ enterName(); return; }
+
+  if(t.id==="student-tab-login"){
+    studentAuthRender("login");
+    return;
+  }
+  if(t.id==="student-tab-register"){
+    studentAuthRender("register");
+    return;
+  }
+  if(t.id==="student-tab-recover"){
+    studentAuthRender("recover");
+    return;
+  }
+  if(t.id==="stu-login"){
+    studentLogin();
+    return;
+  }
+  if(t.id==="stu-register"){
+    studentRegister();
+    return;
+  }
+  if(t.id==="stu-recover"){
+    studentRecover();
+    return;
+  }
+  if(t.id==="student-back-login"){
+    studentAuthRender("login");
+    return;
+  }
+  if(t.id==="copy-recovery-code"){
+    const code = document.getElementById("new-recovery-code")?.value || "";
+    try {
+      await navigator.clipboard.writeText(code);
+      toast("تم نسخ رمز الاستعادة.");
+    } catch (_) {
+      toast("انسخ الرمز يدويًا بالضغط المطوّل عليه.", "err");
+    }
+    return;
+  }
+
   if(t.id==="stud-reload"){ studsErr=""; studs=null; render(); return; }
   if(t.id==="stud-copy"){
     try{ await navigator.clipboard.writeText((studs||[]).map(x=>x.student_name).join("\n")); toast("تم نسخ الأسماء."); }
@@ -452,7 +678,23 @@ document.addEventListener("click", async e => {
   if(t.id==="save") saveLecture();
   if(t.id==="cancel"){ editing=null; render(); }
 });
-document.addEventListener("keydown", e => { if(e.key==="Enter" && e.target.id==="stu-name") enterName(); });
+
+document.addEventListener("keydown", e => {
+  if(e.key !== "Enter") return;
+
+  const id = e.target.id;
+
+  if(id === "stu-username" || id === "stu-password"){
+    if(studentAuthMode === "register"){
+      studentRegister();
+    } else if(studentAuthMode === "recover"){
+      studentRecover();
+    } else {
+      studentLogin();
+    }
+  }
+});
+
 window.addEventListener("hashchange", () => { q=""; filter="all"; render(); scrollTo(0,0); });
 
 async function doLogin(){
@@ -595,8 +837,17 @@ async function init(){
     await checkAdmin(); editing=null; if(isAdmin) await load(); render();
   });
   await load(); render(); logVisit();
-  try{ if(!isAdmin && localStorage.getItem("lib_name") && localStorage.getItem("lib_synced")!==localStorage.getItem("lib_name")) registerStudent(); }catch(_){}
-  const refresh = async () => { if(busy || editing || document.hidden || $("#reader").style.display==="flex") return; const a=document.activeElement; if(a && /INPUT|TEXTAREA|SELECT/.test(a.tagName)) return; await load(); render(); };
+  try{
+    if(
+      !session &&
+      !isAdmin &&
+      localStorage.getItem("lib_name") &&
+      localStorage.getItem("lib_synced") !== localStorage.getItem("lib_name")
+    ){
+      registerStudent();
+    }
+  }catch(_){}
+  const refresh = async () => { if(busy || editing || document.hidden || $("#reader").style.display==="flex") return; if(document.getElementById("student-auth-form")) return; const a=document.activeElement; if(a && /INPUT|TEXTAREA|SELECT/.test(a.tagName)) return; await load(); render(); };
   document.addEventListener("visibilitychange", refresh);
   setInterval(refresh, 90000);
 }
