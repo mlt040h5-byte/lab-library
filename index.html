@@ -860,7 +860,7 @@ if('serviceWorker' in navigator) addEventListener('load',()=>navigator.serviceWo
 </script>
 
 <script>
-/* ===== الدفعة 1: حساب الطالب + متابعة الدراسة + الملاحظات + الإعدادات ===== */
+/* ===== المرحلة 1: حساب الطالب + متابعة الدراسة + الملاحظات + الإعدادات ===== */
 const st = {uid:null, loaded:false, err:"", prof:null, prog:new Map(), notes:[], tab:"home", edit:null, nq:"", saving:false, again:false, timer:null};
 const isStudent = () => !!session && !isAdmin;
 const stLec = id => lectures.find(l => l.id === id);
@@ -913,4 +913,4 @@ async function stSaveNote(){
   try{
     const row = {title, body, subject_id:sid, lecture_id:lid};
     const r = e.id ? await sb.from("notes").update(row).eq("id", e.id).select().single()
-                   : await sb.from("notes").insert({user_id:st.uid, ...row
+                   : await sb.from("notes").insert({user_id:st.uid, ...ro
