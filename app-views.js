@@ -54,7 +54,7 @@ function lecCard(l, admin){
   const tb = (k, label) => `<button class="chipb ${st[k]?"on":""}" data-act="tog" data-k="${k}" data-id="${l.id}">${label}</button>`;
   return `<div class="lec ${me&&st.completed?"done":""}"><h3>${esc(l.title)}${isNew?'<span class="new">جديد</span>':''}</h3>
   <div class="m">${meta}</div>${l.description?`<p>${esc(l.description)}</p>`:""}
-  <div class="acts"><button class="btn sm" data-act="read" data-id="${l.id}">📖 قراءة</button><a class="btn sec sm" href="${fileUrl(l.file_path,true)}" download>⬇ تنزيل</a>
+  <div class="acts"><button class="btn sm" data-act="read" data-id="${l.id}">📖 قراءة</button><a class="btn sec sm" href="${fileUrl(l.file_path,true)}" download>⬇ تنزيل</a><button class="btn sec sm" data-act="sharemenu" data-id="${l.id}">↗ مشاركة</button>
   ${me?`${tb("completed","✓ مكتملة")}${tb("favorite","★ مفضلة")}${tb("saved","🔖 للمراجعة")}<button class="chipb" data-act="lecnote" data-id="${l.id}">📝 ملاحظة</button>`:""}
   ${admin?`<button class="btn sec sm" data-act="edit" data-id="${l.id}">✏ تعديل</button><button class="btn del sm" data-act="del" data-id="${l.id}">🗑 حذف</button>`:""}</div></div>`;
 }

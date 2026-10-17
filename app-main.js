@@ -64,6 +64,11 @@ const ACT = {
   done: t => { fDone = t.dataset.id; render(); },
   tog: t => setProg(t.dataset.id, {[t.dataset.k]: !pg(t.dataset.id)[t.dataset.k]}),
   read: t => openReader(lectures.find(l => l.id === t.dataset.id)),
+  sharemenu: t => openShareMenu(lectures.find(l => l.id === t.dataset.id)),
+  sharecurrent: () => openShareMenu(curLec),
+  shareclose: () => closeShareMenu(),
+  sharelink: () => shareLectureLink(),
+  sharepdf: () => shareLecturePdf(),
   lecnote: t => lecNote(t.dataset.id),
   dtab: t => { dashTab = t.dataset.id; render(); },
   newnote: () => newNote(null),
@@ -163,6 +168,79 @@ window.addEventListener("hashchange", () => {
 });
 document.addEventListener("visibilitychange", () => { if(document.hidden) saveNote(); });
 window.addEventListener("beforeunload", () => { saveNote(); });
+
+/* ---------- مشاركة المحاضرات خارج التطبيق ---------- */
+let shareLec = null;
+function openShareMenu(l){
+  if(!l) return toast("تعذر العثور على المحاضرة.", "err");
+  shareLec = l;
+  const title = $("#sharetitle");
+  if(title) title.textContent = "مشاركة: " + l.title;
+  const modal = $("#sharemodal");
+  if(modal) modal.style.display = "flex";
+}
+function closeShareMenu(){
+  const modal = $("#sharemodal");
+  if(modal) modal.style.display = "none";
+}
+async function copyShareUrl(url){
+  try{
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      await navigator.clipboard.writeText(url);
+      toast("تم نسخ رابط المحاضرة. يمكنك لصقه في واتساب أو تيليغرام.");
+      return true;
+    }
+  }catch(_){}
+  try{
+    const el = document.createElement("textarea");
+    el.value = url; el.readOnly = true; el.style.position = "fixed"; el.style.opacity = "0";
+    document.body.appendChild(el); el.select();
+    const ok = document.execCommand("copy"); el.remove();
+    if(ok){ toast("تم نسخ رابط المحاضرة."); return true; }
+  }catch(_){}
+  window.prompt("انسخ رابط المحاضرة:", url);
+  return false;
+}
+async function shareLectureLink(){
+  const l = shareLec; if(!l) return;
+  const url = fileUrl(l.file_path);
+  closeShareMenu();
+  try{
+    if(navigator.share){
+      await navigator.share({title:l.title, text:"محاضرة من مكتبة تقنيات المختبرات الطبية: " + l.title, url});
+    }else{
+      await copyShareUrl(url);
+    }
+  }catch(e){
+    if(e && e.name === "AbortError") return;
+    await copyShareUrl(url);
+  }
+}
+async function shareLecturePdf(){
+  const l = shareLec; if(!l) return;
+  const url = fileUrl(l.file_path);
+  closeShareMenu();
+  if(!navigator.share || !window.File || !navigator.canShare){
+    toast("هذا المتصفح لا يدعم مشاركة ملف PDF مباشرة؛ سيتم فتح رابط الملف.", "err");
+    window.open(fileUrl(l.file_path, true), "_blank", "noopener");
+    return;
+  }
+  try{
+    toast("جارٍ تجهيز ملف PDF للمشاركة…");
+    const response = await fetch(url);
+    if(!response.ok) throw new Error("download");
+    const blob = await response.blob();
+    const safeName = String(l.title || "lecture").replace(/[\\/:*?"<>|]+/g, "-").trim().slice(0,100) || "lecture";
+    const file = new File([blob], safeName + ".pdf", {type:"application/pdf"});
+    if(!navigator.canShare({files:[file]})) throw new Error("unsupported");
+    await navigator.share({files:[file], title:l.title, text:"محاضرة من مكتبة تقنيات المختبرات الطبية: " + l.title});
+  }catch(e){
+    if(e && e.name === "AbortError") return;
+    toast("تعذرت مشاركة الملف نفسه؛ يمكنك مشاركة الرابط بدلًا منه.", "err");
+    shareLec = l;
+    openShareMenu(l);
+  }
+}
 
 /* ---------- قارئ PDF ---------- */
 let pdfjs = null;
