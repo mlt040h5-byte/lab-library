@@ -257,4 +257,3 @@ async function enablePush(){
     toast("تم تفعيل الإشعارات."); render();
   }catch(e){ toast("تعذر تفعيل الإشعارات: " + (e.message || e), "err"); }
 }
-
