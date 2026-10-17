@@ -283,6 +283,7 @@ function adminView(){
    <label>${e?"استبدال ملف PDF (اتركه فارغًا للإبقاء على الملف الحالي)":"ملف PDF (الحد الأقصى "+MAX_MB+" ميجابايت)"}</label>
    <input id="f-file" type="file" accept="application/pdf,.pdf">
    <p><button class="btn" data-act="save" ${busy?"disabled":""}>${busy?"جارٍ الحفظ…":(e?"حفظ التعديلات":"رفع المحاضرة")}</button>${e?` <button class="btn sec" data-act="cancel">إلغاء</button>`:""}</p></div>
+  ${quizAdminPanel()}
   ${annPanel()}
   ${schedPanel()}
   ${acctsPanel()}

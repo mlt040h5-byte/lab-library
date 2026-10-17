@@ -106,7 +106,7 @@ function dashView(){
   <div class="panel"><h3>التقدم حسب المادة</h3>${bars||'<p class="hint">لا توجد مواد.</p>'}</div>
   <div class="tabs">${tabs.map(([k,t]) => `<button class="tab ${dashTab===k?"on":""}" data-act="dtab" data-id="${k}">${t}</button>`).join("")}</div>
   ${list.length ? list.map(l => lecCard(l)).join("") : `<div class="empty">لا توجد محاضرات في هذه القائمة.</div>`}
-  <p><a class="btn sec" href="#/notes">📝 ملاحظاتي (${notes.length})</a></p>`;
+  ${quizStatsBlock()}<p><a class="btn" href="#/quizzes">📝 الاختبارات</a> <a class="btn sec" href="#/notes">📝 ملاحظاتي (${notes.length})</a></p>`;
 }
 function notesView(){
   const list = notes.filter(n => !nq || norm(n.title).includes(norm(nq)) || norm(n.body).includes(norm(nq)));

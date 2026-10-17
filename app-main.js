@@ -12,6 +12,8 @@ function routeView(h){
   }
   if(h === "#/schedule") return scheduleView();
   if(h === "#/news") return newsView();
+  if(h === "#/quizzes") return quizzesView();
+  if(h.startsWith("#/quiz/")) return quizView(h.slice(7));
   return homeView();
 }
 function renderChrome(h){
@@ -19,7 +21,7 @@ function renderChrome(h){
   const on = ready && session && !pendingCode && !h.startsWith("#/admin");
   if(!on){ nav.style.display = "none"; document.body.classList.remove("hasnav"); hic.innerHTML = ""; return; }
   const items = me
-    ? [["#/","🏠","المكتبة"],["#/me","📊","متابعتي"],["#/schedule","🗓","الجدول"],["#/news","📢","الإعلانات"],["#/profile","👤","حسابي"]]
+    ? [["#/","🏠","المكتبة"],["#/me","📊","متابعتي"],["#/schedule","🗓","الجدول"],["#/news","📢","الإعلانات"],["#/profile","👤","حسابي"],["#/quizzes","📝","الاختبارات"]]
     : [["#/","🏠","المكتبة"],["#/schedule","🗓","الجدول"],["#/news","📢","الإعلانات"],["#/admin","⚙️","الإدارة"]];
   const active = x => x === "#/" ? (h === "#/" || h.startsWith("#/s/")) : (h === x || h.startsWith(x + "/"));
   nav.innerHTML = items.map(([href, ic, t]) => `<a href="${href}" class="${active(href)?"on":""}"><b>${ic}</b>${t}</a>`).join("");
@@ -109,11 +111,12 @@ const ACT = {
 };
 document.addEventListener("click", e => {
   const t = e.target.closest("[data-act]"); if(!t) return;
-  const f = ACT[t.dataset.act]; if(!f) return;
+  const f = ACT[t.dataset.act] || QUIZ_ACT[t.dataset.act]; if(!f) return;
   if(t.tagName === "A") e.preventDefault();
   f(t, e);
 });
 document.addEventListener("input", e => {
+  if(quizOnInput(e)) return;
   const id = e.target.id;
   if(id === "q"){ q = e.target.value; render(); }
   else if(id === "nq"){ nq = e.target.value; render(); }
@@ -123,6 +126,7 @@ document.addEventListener("input", e => {
   else if(id === "n-title" || id === "n-body") noteChanged();
 });
 document.addEventListener("change", e => {
+  if(quizOnChange(e)) return;
   const t = e.target, id = t.id;
   if(id === "f-kind"){ fKind = t.value; render(); }
   else if(id === "f-sem"){ fSem = t.value; render(); }
@@ -153,6 +157,7 @@ document.addEventListener("keydown", e => {
 });
 window.addEventListener("hashchange", () => {
   saveNote();
+  quizRouteChange(route());
   q = ""; nq = ""; filter = "all"; fKind = ""; fSem = ""; fDone = "";
   render(); scrollTo(0,0);
 });
@@ -228,16 +233,17 @@ async function init(){
     if(ev === "INITIAL_SESSION" || ev === "TOKEN_REFRESHED" || ev === "USER_UPDATED" || (ev === "SIGNED_IN" && sess && sess.user && sess.user.id === prev)) return;
     ready = false; render();
     stats = null; accts = null; statsErr = ""; acctsErr = "";
-    await checkAdmin(); await loadMe(); editing = null; ready = true; render();
+    await checkAdmin(); await loadMe(); await loadQuizzes(); editing = null; ready = true; render();
     if(session && !isAdmin) logVisit();
   });
   await Promise.all([load(), loadMe()]);
+  await loadQuizzes();
   ready = true; render(); logVisit();
   const refresh = async () => {
     if(busy || editing || document.hidden || $("#reader").style.display === "flex") return;
     if(route().startsWith("#/note/")) return;
     const a = document.activeElement; if(a && /INPUT|TEXTAREA|SELECT/.test(a.tagName)) return;
-    await load(); if(me) await loadNotifs(); render();
+    await load(); if(me) await loadNotifs(); await loadQuizzes(); render();
   };
   document.addEventListener("visibilitychange", refresh);
   setInterval(refresh, 90000);
