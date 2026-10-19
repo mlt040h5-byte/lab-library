@@ -1,16 +1,25 @@
+
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#0b4f5b">
+<meta name="description" content="مكتبة محاضرات طلبة قسم تقنيات المختبرات الطبية - المرحلة الثانية">
+<meta name="color-scheme" content="light dark">
+
+<link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
+
 <title>مكتبة محاضرات تقنيات المختبرات الطبية — المرحلة الثانية</title>
+
 <link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700&display=swap" rel="stylesheet">
+
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+
 <style>
 :root{--bg:#f4f7f9;--card:#fff;--ink:#16303d;--mute:#5d7280;--brand:#0f6b7a;--brand2:#0b4f5b;--line:#dbe4e9;--ok:#1b7f4b;--err:#b3261e;--soft:#e4f1f3}
 @media (prefers-color-scheme:dark){:root{--bg:#0f1a20;--card:#17262e;--ink:#e6f0f4;--mute:#93a9b5;--brand:#4fb3c3;--brand2:#7cc9d6;--line:#2a3d48;--soft:#1d3640}}
@@ -77,7 +86,8 @@ label{display:block;margin:12px 0 4px;font-weight:500}
 .row:first-of-type{border-top:0}
 .code{font-family:monospace;direction:ltr;text-align:left;word-break:break-all;background:var(--soft);padding:12px;border-radius:10px;margin:10px 0;font-size:.95rem}
 #toast{position:fixed;inset-inline:12px;bottom:calc(84px + env(safe-area-inset-bottom));max-width:480px;margin:auto;padding:12px 16px;border-radius:10px;color:#fff;display:none;z-index:60}
-#toast.ok{background:var(--ok)}#toast.err{background:var(--err)}
+#toast.ok{background:var(--ok)}
+#toast.err{background:var(--err)}
 #nav{position:fixed;bottom:0;inset-inline:0;background:var(--card);border-top:1px solid var(--line);display:none;justify-content:space-around;padding:6px 4px calc(6px + env(safe-area-inset-bottom));padding-right:84px;z-index:30}
 #nav a{flex:1;text-align:center;text-decoration:none;color:var(--mute);font-size:.72rem;line-height:1.25}
 #nav a b{display:block;font-size:1.25rem;font-weight:400}
@@ -99,20 +109,62 @@ label{display:block;margin:12px 0 4px;font-weight:500}
 footer{text-align:center;color:var(--mute);font-size:.8rem;padding:20px}
 </style>
 </head>
-<body>
-<header><div class="in"><div><h1><a href="#/" style="color:#fff;text-decoration:none">📚 مكتبة محاضرات تقنيات المختبرات الطبية</a></h1><p>المرحلة الثانية</p></div><div class="hic" id="hic"></div></div></header>
-<main id="app"><div class="empty">جارٍ التحميل…</div></main>
-<footer><a href="#/admin">دخول المالك</a></footer>
-<div id="toast"></div>
-<nav id="nav"></nav>
-<div id="reader"><div class="top"><button class="btn sec sm" data-act="rclose">إغلاق ✕</button><span id="rtitle"></span><button class="btn sec sm" data-act="sharecurrent">مشاركة</button><button class="btn sec sm" data-act="rdone" id="rdone" style="display:none">✓ مكتملة</button><a class="btn sec sm" id="rdl">تنزيل</a></div><div id="pages"></div></div>
-<div id="sharemodal" role="dialog" aria-modal="true" aria-labelledby="sharetitle"><div class="sharebox"><h3 id="sharetitle">مشاركة المحاضرة</h3><p>اختر طريقة المشاركة خارج التطبيق.</p><div class="shareopts"><button class="btn" data-act="sharelink">🔗 مشاركة رابط المحاضرة</button><button class="btn sec" data-act="sharepdf">📄 مشاركة ملف PDF نفسه</button></div><button class="btn sec sharecancel" data-act="shareclose">إلغاء</button></div></div>
 
-<script src="app-core.js?v=2"></script>
-<script src="app-views.js?v=2"></script>
-<script src="app-admin.js?v=2"></script>
-<script src="app-quiz.js?v=2"></script>
-<script src="app-main.js?v=2"></script>
+<body>
+<header>
+  <div class="in">
+    <div>
+      <h1><a href="#/" style="color:#fff;text-decoration:none">📚 مكتبة محاضرات تقنيات المختبرات الطبية</a></h1>
+      <p>المرحلة الثانية</p>
+    </div>
+    <div class="hic" id="hic"></div>
+  </div>
+</header>
+
+<main id="app">
+  <div class="empty">جارٍ التحميل…</div>
+</main>
+
+<footer>
+  <a href="#/admin">دخول المالك</a>
+</footer>
+
+<div id="toast" role="status" aria-live="polite"></div>
+
+<nav id="nav" aria-label="التنقل الرئيسي"></nav>
+
+<div id="reader">
+  <div class="top">
+    <button class="btn sec sm" data-act="rclose">إغلاق ✕</button>
+    <span id="rtitle"></span>
+    <button class="btn sec sm" data-act="sharecurrent">مشاركة</button>
+    <button class="btn sec sm" data-act="rdone" id="rdone" style="display:none">✓ مكتملة</button>
+    <a class="btn sec sm" id="rdl">تنزيل</a>
+  </div>
+  <div id="pages"></div>
+</div>
+
+<div id="sharemodal" role="dialog" aria-modal="true" aria-labelledby="sharetitle">
+  <div class="sharebox">
+    <h3 id="sharetitle">مشاركة المحاضرة</h3>
+    <p>اختر طريقة المشاركة خارج التطبيق.</p>
+    <div class="shareopts">
+      <button class="btn" data-act="sharelink">🔗 مشاركة رابط المحاضرة</button>
+      <button class="btn sec" data-act="sharepdf">📄 مشاركة ملف PDF نفسه</button>
+    </div>
+    <button class="btn sec sharecancel" data-act="shareclose">إلغاء</button>
+  </div>
+</div>
+
+<!-- ملفات التطبيق: جرى تحديث أرقام الإصدارات لتجنب تحميل النسخ القديمة من الذاكرة المؤقتة. -->
+<script src="app-core.js?v=3"></script>
+<script src="app-views.js?v=3"></script>
+<script src="app-admin.js?v=3"></script>
+<script src="app-quiz.js?v=3"></script>
+<script src="app-main.js?v=3"></script>
+
+<!-- المساعد الذكي -->
 <script data-gabster-widget src="https://widget.gabster.ai/loader?cbid=6acfe0f5449b0dc12d44a813" data-embed-type="widget"></script>
+
 </body>
 </html>
