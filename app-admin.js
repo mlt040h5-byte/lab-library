@@ -1,409 +1,120 @@
-
 /* ===== لوحة الإدارة ===== */
 let stats = null, statsErr = "", statsBusy = false;
 let accts = null, acctsErr = "", acctsBusy = false, acctQ = "";
 
 /* ---------- دخول المالك ---------- */
 async function doAdminLogin(){
-  const {error} = await sb.auth.signInWithPassword({
-    email:$("#em").value.trim().toLowerCase(),
-    password:$("#pw").value.trim()
-  });
-
+  const {error} = await sb.auth.signInWithPassword({email:$("#em").value.trim().toLowerCase(), password:$("#pw").value.trim()});
   if(error){
-    const m = /invalid login credentials/i.test(error.message)
-      ? "البريد أو كلمة المرور غير صحيحة."
-      : error.message;
-
+    const m = /invalid login credentials/i.test(error.message) ? "البريد أو كلمة المرور غير صحيحة." : error.message;
     toast("فشل تسجيل الدخول: " + m, "err");
-  }else{
-    toast("تم تسجيل الدخول بنجاح.");
-  }
+  } else toast("تم تسجيل الدخول بنجاح.");
 }
-
 async function sendOtp(){
-  const email = $("#em").value.trim().toLowerCase();
-
-  if(!email) return toast("اكتب بريدك أولًا.","err");
-
-  const {error} = await sb.auth.signInWithOtp({
-    email,
-    options:{shouldCreateUser:false}
-  });
-
+  const email = $("#em").value.trim().toLowerCase(); if(!email) return toast("اكتب بريدك أولًا.","err");
+  const {error} = await sb.auth.signInWithOtp({email, options:{shouldCreateUser:false}});
   if(error) return toast("تعذر إرسال الرمز: " + error.message, "err");
-
-  $("#otpbox").style.display = "block";
-  toast("أُرسل الرمز إلى بريدك. افحص الوارد والرسائل غير المرغوبة.");
+  $("#otpbox").style.display = "block"; toast("أُرسل الرمز إلى بريدك. افحص الوارد والرسائل غير المرغوبة.");
 }
-
 async function verifyOtp(){
-  const email = $("#em").value.trim().toLowerCase();
-  const token = $("#otp").value.trim();
-
+  const email = $("#em").value.trim().toLowerCase(), token = $("#otp").value.trim();
   if(!token) return toast("اكتب الرمز.","err");
-
-  const {error} = await sb.auth.verifyOtp({
-    email,
-    token,
-    type:"email"
-  });
-
-  if(error){
-    toast("الرمز غير صحيح أو انتهت صلاحيته: " + error.message, "err");
-  }else{
-    toast("تم تسجيل الدخول بنجاح.");
-  }
+  const {error} = await sb.auth.verifyOtp({email, token, type:"email"});
+  if(error) toast("الرمز غير صحيح أو انتهت صلاحيته: " + error.message, "err"); else toast("تم تسجيل الدخول بنجاح.");
 }
 
 /* ---------- المحاضرات ---------- */
-
-// التحقق من سلامة ملف PDF قبل رفعه.
 async function validatePdf(f){
   if(!f) return "اختر ملف PDF.";
-
-  if(!/\.pdf$/i.test(f.name) || (f.type && f.type !== "application/pdf")){
-    return "الملف ليس PDF.";
-  }
-
-  if(f.size > MAX_MB * 1048576){
-    return `حجم الملف أكبر من ${MAX_MB} ميجابايت.`;
-  }
-
-  if(f.size < 100){
-    return "الملف فارغ أو تالف.";
-  }
-
-  try{
-    const head = await f.slice(0,5).text();
-
-    if(head !== "%PDF-"){
-      return "محتوى الملف ليس PDF صالحًا.";
-    }
-  }catch(_){
-    return "تعذر قراءة الملف.";
-  }
-
+  if(!/\.pdf$/i.test(f.name) || (f.type && f.type !== "application/pdf")) return "الملف ليس PDF.";
+  if(f.size > MAX_MB*1048576) return `حجم الملف أكبر من ${MAX_MB} ميجابايت.`;
+  if(f.size < 100) return "الملف فارغ أو تالف.";
+  const head = await f.slice(0,5).text();
+  if(head !== "%PDF-") return "محتوى الملف ليس PDF صالحًا.";
   return null;
 }
-
-// إنشاء مسار جديد للمحاضرة داخل R2.
-// البادئة r2: مهمة حتى يميّز التطبيق الملف عن ملفات Supabase القديمة.
-const newPath = sid => `r2:${sid}/${crypto.randomUUID()}.pdf`;
-
-// رفع المحاضرات الجديدة إلى Cloudflare R2.
-// تعتمد هذه الدالة على r2Upload المعرّفة في app-core.js.
-const upload = (path, f) => r2Upload(path, f);
-
-// حذف ملف من مكان التخزين المناسب.
-// ملفات r2: تُحذف من R2، والملفات القديمة تُحذف من Supabase.
-async function removeLectureFile(path){
-  return deleteLectureFile(path);
-}
+const newPath = sid => `${sid}/${crypto.randomUUID()}.pdf`;
+const upload = (path, f) => sb.storage.from(BUCKET).upload(path, f, {contentType:"application/pdf", upsert:false});
 
 async function saveLecture(){
   if(busy) return;
-
-  const sid = $("#f-sub").value;
-  const title = $("#f-title").value.trim();
-  const desc = $("#f-desc").value.trim();
-  const file = $("#f-file").files[0];
-  const kind = $("#f-kind2").value || null;
-  const semester = $("#f-sem2").value || null;
-
-  if(!sid) return toast("اختر المادة.","err");
+  const sid = $("#f-sub").value, title = $("#f-title").value.trim(), desc = $("#f-desc").value.trim(), file = $("#f-file").files[0];
+  const kind = $("#f-kind2").value || null, semester = $("#f-sem2").value || null;
   if(!title) return toast("اكتب عنوان المحاضرة.","err");
-
   const e = editing ? lectures.find(l => l.id === editing) : null;
-
-  if(editing && !e){
-    editing = null;
-    return toast("تعذر العثور على المحاضرة المراد تعديلها. حدّث الصفحة وحاول مجددًا.","err");
-  }
-
-  // الملف إلزامي عند إنشاء محاضرة جديدة،
-  // أما عند التعديل فيمكن تركه فارغًا للإبقاء على الملف الحالي.
-  if(file || !e){
-    const validation = await validatePdf(file);
-    if(validation) return toast(validation,"err");
-  }
-
-  busy = true;
-  render();
-
+  if(file || !e){ const v = await validatePdf(file); if(v) return toast(v,"err"); }
+  busy = true; render();
   try{
     if(!e){
-      // ---------- إنشاء محاضرة جديدة ----------
-
       const path = newPath(sid);
-
-      // رفع الملف الجديد إلى R2.
-      const uploaded = await upload(path, file);
-
-      if(uploaded?.error){
-        throw uploaded.error;
-      }
-
-      // تخزين المسار مع البادئة r2: في قاعدة البيانات.
-      const inserted = await sb.from("lectures").insert({
-        subject_id:sid,
-        title,
-        description:desc || null,
-        file_path:path,
-        file_size:file.size,
-        kind,
-        semester
-      });
-
-      if(inserted.error){
-        // التراجع عن رفع الملف إذا تعذّر حفظ سجل المحاضرة.
-        try{
-          await removeLectureFile(path);
-        }catch(_){}
-
-        throw inserted.error;
-      }
-
-      toast("تم رفع المحاضرة إلى التخزين ونشرها بنجاح.");
-
-    }else{
-      // ---------- تعديل محاضرة موجودة ----------
-
-      const upd = {
-        subject_id:sid,
-        title,
-        description:desc || null,
-        kind,
-        semester,
-        updated_at:new Date().toISOString()
-      };
-
-      let newFile = null;
-
+      let r = await upload(path, file); if(r.error) throw r.error;
+      r = await sb.from("lectures").insert({subject_id:sid, title, description:desc||null, file_path:path, file_size:file.size, kind, semester});
+      if(r.error){ await sb.storage.from(BUCKET).remove([path]); throw r.error; }
+      toast("تم رفع المحاضرة ونشرها بنجاح.");
+    } else {
+      const upd = {subject_id:sid, title, description:desc||null, kind, semester, updated_at:new Date().toISOString()};
+      let newFile = null, moved = null;
       if(file){
-        // عند استبدال الملف، يُرفع الملف الجديد إلى R2.
         newFile = newPath(sid);
-
-        const uploaded = await upload(newFile, file);
-
-        if(uploaded?.error){
-          throw uploaded.error;
-        }
-
-        upd.file_path = newFile;
-        upd.file_size = file.size;
+        const r = await upload(newFile, file); if(r.error) throw r.error;
+        upd.file_path = newFile; upd.file_size = file.size;
+      } else if(sid !== e.subject_id){
+        const np = newPath(sid);
+        const r = await sb.storage.from(BUCKET).move(e.file_path, np); if(r.error) throw r.error;
+        moved = np; upd.file_path = np;
       }
-
-      // إذا تغيرت المادة ولم يُرفع ملف جديد، نبقي الملف
-      // في مخزنه ومساره الحاليين. لا نحاول نقل ملف قديم
-      // من Supabase إلى R2 أو نقل ملف R2 بطريقة غير مدعومة.
-
-      const updated = await sb
-        .from("lectures")
-        .update(upd)
-        .eq("id", e.id);
-
-      if(updated.error){
-        // إذا فشل حفظ التعديل، نحذف الملف الجديد الذي رُفع
-        // ونترك الملف الأصلي كما هو.
-        if(newFile){
-          try{
-            await removeLectureFile(newFile);
-          }catch(_){}
-        }
-
-        throw updated.error;
+      const r = await sb.from("lectures").update(upd).eq("id", e.id);
+      if(r.error){
+        if(newFile) await sb.storage.from(BUCKET).remove([newFile]);
+        if(moved) await sb.storage.from(BUCKET).move(moved, e.file_path);
+        throw r.error;
       }
-
-      if(newFile){
-        // لا نحذف الملف القديم إلا بعد نجاح تحديث سجل المحاضرة.
-        const removed = await removeLectureFile(e.file_path);
-
-        if(removed?.error){
-          toast(
-            "تم حفظ التعديلات ورفع الملف الجديد، لكن تعذر حذف الملف القديم: " +
-            (removed.error.message || "خطأ غير معروف"),
-            "err"
-          );
-        }else{
-          toast("تم حفظ التعديلات واستبدال ملف المحاضرة.");
-        }
-      }else{
-        toast("تم حفظ التعديلات.");
-      }
-
+      if(newFile){ const d = await sb.storage.from(BUCKET).remove([e.file_path]); if(d.error) toast("تم الحفظ، لكن تعذر حذف الملف القديم.","err"); else toast("تم حفظ التعديلات واستبدال الملف."); }
+      else toast("تم حفظ التعديلات.");
       editing = null;
     }
-
     await load();
-
-  }catch(err){
-    toast(
-      "فشلت العملية: " + (err?.message || "خطأ غير معروف"),
-      "err"
-    );
-  }finally{
-    busy = false;
-    render();
-  }
+  }catch(err){ toast("فشلت العملية: " + (err.message || "خطأ غير معروف"), "err"); }
+  busy = false; render();
 }
-
 async function delLecture(id){
-  const l = lectures.find(x => x.id === id);
-
-  if(!l) return;
-
-  if(!confirm(`حذف المحاضرة «${l.title}» نهائيًا؟`)){
-    return;
-  }
-
-  busy = true;
-  render();
-
-  try{
-    // حذف سجل المحاضرة من قاعدة البيانات.
-    const removedRow = await sb
-      .from("lectures")
-      .delete()
-      .eq("id", id);
-
-    if(removedRow.error){
-      throw removedRow.error;
-    }
-
-    // حذف الملف من مخزنه الصحيح: R2 أو Supabase القديم.
-    const removedFile = await removeLectureFile(l.file_path);
-
-    if(removedFile?.error){
-      toast(
-        "حُذفت المحاضرة من القائمة، لكن تعذر حذف ملفها من التخزين: " +
-        (removedFile.error.message || "خطأ غير معروف"),
-        "err"
-      );
-    }else{
-      toast("تم حذف المحاضرة وملفها.");
-    }
-
-    await load();
-
-  }catch(err){
-    toast(
-      "فشل حذف المحاضرة: " + (err?.message || "خطأ غير معروف"),
-      "err"
-    );
-  }finally{
-    busy = false;
-    render();
-  }
+  const l = lectures.find(x => x.id === id); if(!l) return;
+  if(!confirm(`حذف المحاضرة «${l.title}» نهائيًا؟`)) return;
+  const r = await sb.from("lectures").delete().eq("id", id);
+  if(r.error) return toast("فشل الحذف: " + r.error.message, "err");
+  const d = await sb.storage.from(BUCKET).remove([l.file_path]);
+  toast(d.error ? "حُذفت المحاضرة لكن تعذر حذف ملفها من التخزين." : "تم حذف المحاضرة وملفها.", d.error ? "err" : "ok");
+  await load(); render();
 }
 
 /* ---------- الخلفية ---------- */
 async function shrinkImage(f){
-  if(!/^image\/(jpeg|png|webp)$/.test(f.type)){
-    throw new Error("نوع الصورة غير مدعوم (JPG أو PNG أو WEBP فقط).");
-  }
-
-  if(f.size > 20*1048576){
-    throw new Error("الصورة كبيرة جدًا.");
-  }
-
-  const bmp = await createImageBitmap(f);
-  const k = Math.min(1, 1600/Math.max(bmp.width, bmp.height));
-
-  const c = document.createElement("canvas");
-  c.width = Math.round(bmp.width*k);
-  c.height = Math.round(bmp.height*k);
-
+  if(!/^image\/(jpeg|png|webp)$/.test(f.type)) throw new Error("نوع الصورة غير مدعوم (JPG أو PNG أو WEBP فقط).");
+  if(f.size > 20*1048576) throw new Error("الصورة كبيرة جدًا.");
+  const bmp = await createImageBitmap(f), k = Math.min(1, 1600/Math.max(bmp.width, bmp.height));
+  const c = document.createElement("canvas"); c.width = Math.round(bmp.width*k); c.height = Math.round(bmp.height*k);
   c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
-
-  return await new Promise((resolve, reject) => {
-    c.toBlob(blob => {
-      if(blob){
-        resolve(blob);
-      }else{
-        reject(new Error("تعذر معالجة صورة الخلفية."));
-      }
-    }, "image/jpeg", 0.82);
-  });
+  return await new Promise(r => c.toBlob(r, "image/jpeg", 0.82));
 }
-
 async function saveBg(reset){
-  if(busy) return;
-
-  const f = $("#bg-file").files[0];
+  if(busy) return; const f = $("#bg-file").files[0];
   busy = true;
-
   try{
-    let img = settings.bg_image || null;
-    let old = null;
-    let color = settings.bg_color || null;
-    let dim = +$("#bg-dim").value;
-    let newPath2 = null;
-
-    if(reset){
-      old = img;
-      img = null;
-      color = null;
-      dim = 40;
-    }else{
+    let img = settings.bg_image || null, old = null, color = settings.bg_color || null, dim = +$("#bg-dim").value, newPath2 = null;
+    if(reset){ old = img; img = null; color = null; dim = 40; }
+    else{
       if(colorTouched) color = $("#bg-color").value;
-
-      if(f){
-        const blob = await shrinkImage(f);
-        newPath2 = `bg/${crypto.randomUUID()}.jpg`;
-
-        // الخلفيات تبقى في Supabase Storage، ولا تنتقل إلى R2.
-        const u = await sb.storage
-          .from("site")
-          .upload(newPath2, blob, {
-            contentType:"image/jpeg"
-          });
-
-        if(u.error) throw u.error;
-
-        old = img;
-        img = newPath2;
-      }
+      if(f){ const blob = await shrinkImage(f); newPath2 = `bg/${crypto.randomUUID()}.jpg`;
+        const u = await sb.storage.from("site").upload(newPath2, blob, {contentType:"image/jpeg"}); if(u.error) throw u.error;
+        old = img; img = newPath2; }
     }
-
-    const row = {
-      id:1,
-      bg_color:color,
-      bg_image:img,
-      bg_dim:dim,
-      updated_at:new Date().toISOString()
-    };
-
+    const row = {id:1, bg_color:color, bg_image:img, bg_dim:dim, updated_at:new Date().toISOString()};
     const r = await sb.from("site_settings").upsert(row);
-
-    if(r.error){
-      if(newPath2){
-        await sb.storage.from("site").remove([newPath2]);
-      }
-
-      throw r.error;
-    }
-
-    if(old){
-      await sb.storage.from("site").remove([old]);
-    }
-
-    settings = row;
-    colorTouched = false;
-    applyBg();
-
-    toast(
-      reset
-        ? "تمت إعادة الخلفية الافتراضية."
-        : "تم حفظ مظهر المكتبة."
-    );
-
-  }catch(e){
-    toast("فشل حفظ المظهر: " + (e.message || "خطأ"), "err");
-  }finally{
-    busy = false;
-    render();
-  }
+    if(r.error){ if(newPath2) await sb.storage.from("site").remove([newPath2]); throw r.error; }
+    if(old) await sb.storage.from("site").remove([old]);
+    settings = row; colorTouched = false; applyBg(); toast(reset ? "تمت إعادة الخلفية الافتراضية." : "تم حفظ مظهر المكتبة.");
+  }catch(e){ toast("فشل حفظ المظهر: " + (e.message || "خطأ"), "err"); }
+  busy = false; render();
 }
 
 /* ---------- الإعلانات ---------- */
@@ -416,62 +127,25 @@ function annPanel(){
    ${anns.length ? anns.slice(0,10).map(a => `<div class="lec" style="margin:8px 0"><div>${a.pinned?"📌 ":""}${esc(a.message)}</div><div class="m">${fmtDate(a.created_at)} · ${a.active?"ظاهر":"مخفي"}</div><div class="acts"><button class="btn sec sm" data-act="anntoggle" data-id="${a.id}">${a.active?"إخفاء":"إظهار"}</button><button class="btn sec sm" data-act="annpin" data-id="${a.id}">${a.pinned?"إلغاء التثبيت":"تثبيت"}</button><button class="btn del sm" data-act="anndel" data-id="${a.id}">حذف</button></div></div>`).join("") : '<p class="hint">لا توجد إعلانات.</p>'}
    <p class="hint">الإعلان الجديد يصل تلقائيًا إلى إشعارات الطلاب داخل التطبيق.</p></div>`;
 }
-
 async function postAnn(){
-  const m = $("#ann-text").value.trim();
-
-  if(!m) return toast("اكتب نص الإعلان.","err");
-
-  const pin = $("#ann-pin").checked;
-  const alsoPush = $("#ann-push").checked;
-
-  const r = await sb.from("announcements").insert({
-    message:m,
-    pinned:pin
-  });
-
+  const m = $("#ann-text").value.trim(); if(!m) return toast("اكتب نص الإعلان.","err");
+  const pin = $("#ann-pin").checked, alsoPush = $("#ann-push").checked;
+  const r = await sb.from("announcements").insert({message:m, pinned:pin});
   if(r.error) return toast("فشل النشر: " + r.error.message, "err");
-
   toast("تم نشر الإعلان.");
-
-  if(alsoPush){
-    try{
-      const d = await sendPush("📢 إعلان جديد", m);
-      toast("نُشر الإعلان وأُرسل إشعار إلى " + d.sent + " جهاز.");
-    }catch(e){
-      toast("نُشر الإعلان لكن فشل إشعار الهاتف: " + e.message, "err");
-    }
-  }
-
-  await load();
-  render();
+  if(alsoPush){ try{ const d = await sendPush("📢 إعلان جديد", m); toast("نُشر الإعلان وأُرسل إشعار إلى " + d.sent + " جهاز."); }catch(e){ toast("نُشر الإعلان لكن فشل إشعار الهاتف: " + e.message, "err"); } }
+  await load(); render();
 }
-
 async function annUpdate(id, patch){
-  const r = await sb
-    .from("announcements")
-    .update(patch)
-    .eq("id", id);
-
+  const r = await sb.from("announcements").update(patch).eq("id", id);
   if(r.error) return toast("فشل التعديل: " + r.error.message, "err");
-
-  await load();
-  render();
+  await load(); render();
 }
-
 async function delAnn(id){
   if(!confirm("حذف هذا الإعلان نهائيًا؟")) return;
-
-  const r = await sb
-    .from("announcements")
-    .delete()
-    .eq("id", id);
-
+  const r = await sb.from("announcements").delete().eq("id", id);
   if(r.error) return toast("فشل الحذف: " + r.error.message, "err");
-
-  toast("تم حذف الإعلان.");
-  await load();
-  render();
+  toast("تم حذف الإعلان."); await load(); render();
 }
 
 /* ---------- إشعارات الهاتف ---------- */
@@ -483,45 +157,22 @@ function pushPanel(){
    <p><button class="btn" data-act="pnsend">إرسال الآن</button></p>
    <p class="hint">يصل لمن فعّل إشعارات الهاتف فقط، وقد يتأخر قليلًا.</p></div>`;
 }
-
 async function sendPush(title, body){
-  const r = await sb.functions.invoke("send-push", {
-    body:{title, body}
-  });
-
+  const r = await sb.functions.invoke("send-push", {body:{title, body}});
   if(r.error) throw new Error(r.error.message || "فشل الإرسال");
-
   return r.data;
 }
-
 async function doPushSend(){
-  const title = $("#pn-title").value.trim() || "مكتبة المحاضرات";
-  const body = $("#pn-body").value.trim();
-
+  const title = $("#pn-title").value.trim() || "مكتبة المحاضرات", body = $("#pn-body").value.trim();
   if(!body) return toast("اكتب نص الإشعار.","err");
-
   if(!confirm("إرسال هذا الإشعار لكل المشتركين؟")) return;
-
-  try{
-    const d = await sendPush(title, body);
-
-    toast("أُرسل إلى " + d.sent + " جهاز من " + d.total + ".");
-
-    await loadMe();
-    render();
-
-  }catch(e){
-    toast("فشل الإرسال: " + e.message, "err");
-  }
+  try{ const d = await sendPush(title, body); toast("أُرسل إلى " + d.sent + " جهاز من " + d.total + "."); await loadMe(); render(); }
+  catch(e){ toast("فشل الإرسال: " + e.message, "err"); }
 }
 
 /* ---------- الجدول الدراسي ---------- */
 function schedPanel(){
-  const rows = [...sched].sort((a,b) =>
-    (DAY_ORDER.indexOf(a.day_of_week) - DAY_ORDER.indexOf(b.day_of_week)) ||
-    String(a.start_time).localeCompare(String(b.start_time))
-  );
-
+  const rows = [...sched].sort((a,b) => (DAY_ORDER.indexOf(a.day_of_week) - DAY_ORDER.indexOf(b.day_of_week)) || String(a.start_time).localeCompare(String(b.start_time)));
   return `<div class="panel"><h2>🗓 الجدول الدراسي</h2>
    <label>اليوم</label><select id="sc-day">${DAY_ORDER.map(d => `<option value="${d}">${DAYS[d]}</option>`).join("")}</select>
    <div class="bar"><div style="flex:1"><label>من</label><input id="sc-from" type="time" value="08:30"></div><div style="flex:1"><label>إلى</label><input id="sc-to" type="time" value="10:00"></div></div>
@@ -530,179 +181,75 @@ function schedPanel(){
    <label>القاعة (اختياري)</label><input id="sc-room" maxlength="60">
    <label>المجموعة (اختياري)</label><input id="sc-group" maxlength="40">
    <p><button class="btn" data-act="schadd">إضافة للجدول</button></p>
-   ${rows.map(x => {
-     const s = subj(x.subject_id);
-
-     return `<div class="row">${DAYS[x.day_of_week]} ${hhmm(x.start_time)}–${hhmm(x.end_time)} · ${s?esc(s.name_ar):""} · ${KIND_AR[x.kind]||""}${x.room?" · "+esc(x.room):""}${x.group_name?" · "+esc(x.group_name):""} <button class="btn del sm" data-act="schdel" data-id="${x.id}">حذف</button></div>`;
-   }).join("") || '<p class="hint">لا توجد محاضرات في الجدول بعد.</p>'}</div>`;
+   ${rows.map(x => { const s = subj(x.subject_id);
+     return `<div class="row">${DAYS[x.day_of_week]} ${hhmm(x.start_time)}–${hhmm(x.end_time)} · ${s?esc(s.name_ar):""} · ${KIND_AR[x.kind]||""}${x.room?" · "+esc(x.room):""}${x.group_name?" · "+esc(x.group_name):""} <button class="btn del sm" data-act="schdel" data-id="${x.id}">حذف</button></div>`; }).join("") || '<p class="hint">لا توجد محاضرات في الجدول بعد.</p>'}</div>`;
 }
-
 async function schedAdd(){
-  const from = $("#sc-from").value;
-  const to = $("#sc-to").value;
-
-  if(!from || !to || to <= from){
-    return toast("اختر وقتًا صحيحًا: النهاية بعد البداية.","err");
-  }
-
-  const r = await sb.from("schedule").insert({
-    day_of_week:+$("#sc-day").value,
-    start_time:from,
-    end_time:to,
-    subject_id:$("#sc-sub").value,
-    kind:$("#sc-kind").value,
-    room:$("#sc-room").value.trim() || null,
-    group_name:$("#sc-group").value.trim() || null
-  });
-
+  const from = $("#sc-from").value, to = $("#sc-to").value;
+  if(!from || !to || to <= from) return toast("اختر وقتًا صحيحًا: النهاية بعد البداية.","err");
+  const r = await sb.from("schedule").insert({day_of_week:+$("#sc-day").value, start_time:from, end_time:to, subject_id:$("#sc-sub").value, kind:$("#sc-kind").value, room:$("#sc-room").value.trim()||null, group_name:$("#sc-group").value.trim()||null});
   if(r.error) return toast("تعذرت الإضافة: " + r.error.message, "err");
-
-  toast("أُضيفت المحاضرة إلى الجدول.");
-  await load();
-  render();
+  toast("أُضيفت المحاضرة إلى الجدول."); await load(); render();
 }
-
 async function schedDel(id){
   if(!confirm("حذف هذا الموعد من الجدول؟")) return;
-
-  const r = await sb
-    .from("schedule")
-    .delete()
-    .eq("id", id);
-
+  const r = await sb.from("schedule").delete().eq("id", id);
   if(r.error) return toast("تعذر الحذف: " + r.error.message, "err");
-
-  await load();
-  render();
+  await load(); render();
 }
 
 /* ---------- حسابات الطلاب ---------- */
 async function loadAccts(){
-  if(acctsBusy) return;
-
-  acctsBusy = true;
-
+  if(acctsBusy) return; acctsBusy = true;
   try{
     const r = await sb.rpc("admin_students");
-
-    if(r.error){
-      accts = null;
-      acctsErr = "تعذر تحميل الحسابات: " + r.error.message;
-    }else{
-      accts = r.data || [];
-      acctsErr = "";
-    }
-  }catch(e){
-    accts = null;
-    acctsErr = "تعذر تحميل الحسابات.";
-  }
-
-  acctsBusy = false;
-  render();
+    if(r.error){ accts = null; acctsErr = "تعذر تحميل الحسابات: " + r.error.message; }
+    else { accts = r.data || []; acctsErr = ""; }
+  }catch(e){ accts = null; acctsErr = "تعذر تحميل الحسابات."; }
+  acctsBusy = false; render();
 }
-
 function acctsPanel(){
-  if(acctsErr){
-    return `<div class="panel"><h2>👥 حسابات الطلاب</h2><p class="hint">${esc(acctsErr)}</p><button class="btn sec sm" data-act="acctreload">إعادة المحاولة</button></div>`;
-  }
-
-  if(!accts){
-    return `<div class="panel"><h2>👥 حسابات الطلاب</h2><p class="hint">جارٍ التحميل…</p></div>`;
-  }
-
+  if(acctsErr) return `<div class="panel"><h2>👥 حسابات الطلاب</h2><p class="hint">${esc(acctsErr)}</p><button class="btn sec sm" data-act="acctreload">إعادة المحاولة</button></div>`;
+  if(!accts) return `<div class="panel"><h2>👥 حسابات الطلاب</h2><p class="hint">جارٍ التحميل…</p></div>`;
   const wk = Date.now() - 7*86400000;
-  const act = accts.filter(a => new Date(a.last_seen).getTime() > wk).length;
-  const nw = accts.filter(a => new Date(a.created_at).getTime() > wk).length;
-
-  const list = accts.filter(a =>
-    !acctQ ||
-    norm(a.username).includes(norm(acctQ)) ||
-    norm(a.display_name).includes(norm(acctQ))
-  );
-
+  const act = accts.filter(a => new Date(a.last_seen).getTime() > wk).length, nw = accts.filter(a => new Date(a.created_at).getTime() > wk).length;
+  const list = accts.filter(a => !acctQ || norm(a.username).includes(norm(acctQ)) || norm(a.display_name).includes(norm(acctQ)));
   return `<div class="panel"><h2>👥 حسابات الطلاب</h2>
    <div class="stats"><div class="stat"><b>${accts.length}</b>إجمالي الطلاب</div><div class="stat"><b>${act}</b>نشطون (7 أيام)</div><div class="stat"><b>${nw}</b>جدد (7 أيام)</div><div class="stat"><b>${lectures.length}</b>محاضرات</div></div>
    <div class="bar"><input id="aq" type="search" placeholder="🔎 ابحث بالاسم أو اسم المستخدم…" value="${esc(acctQ)}"></div>
    ${list.map(a => `<div class="lec" style="margin:6px 0"><h3>${esc(a.display_name)} <span class="hint" dir="ltr">@${esc(a.username)}</span></h3><div class="m">آخر ظهور: ${fmtDT(a.last_seen)} · مكتملة ${a.completed} · مفضلة ${a.favorites} · محفوظة ${a.saved} · ملاحظات ${a.notes}</div><div class="acts"><button class="btn sec sm" data-act="acctpass" data-id="${a.user_id}">كلمة مرور جديدة</button><button class="btn del sm" data-act="acctdel" data-id="${a.user_id}">حذف الحساب</button></div></div>`).join("") || '<p class="hint">لا توجد حسابات مطابقة.</p>'}
    <p><button class="btn sec sm" data-act="acctreload">تحديث</button></p></div>`;
 }
-
 async function acctPass(id){
   const p = prompt("كلمة المرور الجديدة للطالب (10 أحرف على الأقل). أبلغه بها بنفسك:");
-
   if(p === null) return;
-
-  if(p.length < 10){
-    return toast("كلمة المرور 10 أحرف على الأقل.","err");
-  }
-
-  const r = await fn("admin-accounts", {
-    action:"reset_password",
-    user_id:id,
-    new_password:p
-  });
-
+  if(p.length < 10) return toast("كلمة المرور 10 أحرف على الأقل.","err");
+  const r = await fn("admin-accounts", {action:"reset_password", user_id:id, new_password:p});
   toast(r.err || "تم تغيير كلمة مرور الطالب.", r.err ? "err" : "ok");
 }
-
 async function acctDel(id){
   const a = (accts || []).find(x => x.user_id === id);
-
-  if(!confirm(`حذف حساب «${a ? a.display_name : ""}» نهائيًا مع ملاحظاته وتقدمه؟ لا يمكن التراجع.`)){
-    return;
-  }
-
-  const r = await fn("admin-accounts", {
-    action:"delete_user",
-    user_id:id
-  });
-
+  if(!confirm(`حذف حساب «${a ? a.display_name : ""}» نهائيًا مع ملاحظاته وتقدمه؟ لا يمكن التراجع.`)) return;
+  const r = await fn("admin-accounts", {action:"delete_user", user_id:id});
   if(r.err) return toast(r.err, "err");
-
-  toast("تم حذف الحساب.");
-  accts = null;
-  acctsErr = "";
-  render();
+  toast("تم حذف الحساب."); accts = null; acctsErr = ""; render();
 }
 
 /* ---------- إحصائيات الدخول ---------- */
 async function loadStats(){
-  if(statsBusy) return;
-
-  statsBusy = true;
-
+  if(statsBusy) return; statsBusy = true;
   try{
     const r = await sb.rpc("visit_stats");
-
-    if(r.error){
-      stats = null;
-      statsErr = "تعذر تحميل الإحصائيات (" + r.error.message + ")";
-    }else{
-      stats = r.data;
-      statsErr = "";
-    }
-  }catch(e){
-    stats = null;
-    statsErr = "تعذر تحميل الإحصائيات.";
-  }
-
-  statsBusy = false;
-  render();
+    if(r.error){ stats = null; statsErr = "تعذر تحميل الإحصائيات (" + r.error.message + ")"; }
+    else { stats = r.data; statsErr = ""; }
+  }catch(e){ stats = null; statsErr = "تعذر تحميل الإحصائيات."; }
+  statsBusy = false; render();
 }
-
 function statsPanel(){
-  if(statsErr){
-    return `<div class="panel"><h2>📈 إحصائيات الدخول</h2><p class="hint">${esc(statsErr)}</p><button class="btn sec sm" data-act="statsreload">إعادة المحاولة</button></div>`;
-  }
-
-  if(!stats){
-    return `<div class="panel"><h2>📈 إحصائيات الدخول</h2><p class="hint">جارٍ التحميل…</p></div>`;
-  }
-
+  if(statsErr) return `<div class="panel"><h2>📈 إحصائيات الدخول</h2><p class="hint">${esc(statsErr)}</p><button class="btn sec sm" data-act="statsreload">إعادة المحاولة</button></div>`;
+  if(!stats) return `<div class="panel"><h2>📈 إحصائيات الدخول</h2><p class="hint">جارٍ التحميل…</p></div>`;
   const box = (n, t) => `<div class="stat"><b>${n}</b>${t}</div>`;
-  const days = stats.daily || [];
-  const max = Math.max(1, ...days.map(x => x.opens));
-
+  const days = stats.daily || [], max = Math.max(1, ...days.map(x => x.opens));
   return `<div class="panel"><h2>📈 إحصائيات الدخول</h2>
    <div class="stats">${box(stats.today_opens,"مرات الفتح اليوم")}${box(stats.today_devices,"أجهزة اليوم")}${box(stats.week_opens,"مرات الفتح (7 أيام)")}${box(stats.week_devices,"أجهزة (7 أيام)")}${box(stats.month_opens,"مرات الفتح (30 يومًا)")}${box(stats.month_devices,"أجهزة (30 يومًا)")}${box(stats.total_opens,"إجمالي مرات الفتح")}${box(stats.total_devices,"إجمالي الأجهزة")}</div>
    <h3>آخر 14 يومًا (مرات الفتح)</h3>
@@ -723,21 +270,10 @@ function adminView(){
    <p class="hint">اكتب بريدك في الخانة أعلاه فقط، ثم اضغط إرسال الرمز.</p>
    <button class="btn sec" data-act="sendotp">إرسال الرمز إلى بريدي</button>
    <div id="otpbox" style="display:none"><label>الرمز الذي وصلك</label><input id="otp" inputmode="numeric" autocomplete="one-time-code" dir="ltr" maxlength="10"><p><button class="btn" data-act="verifyotp">تأكيد الرمز</button></p></div></div>`;
-
-  if(adminErr && !isAdmin){
-    return `<div class="panel"><h2>تعذر التحقق من الصلاحية</h2><p>المشكلة في الاتصال بالإنترنت وليست في حسابك.</p><button class="btn" data-act="retryadmin">إعادة المحاولة</button> <button class="btn sec" data-act="logout">تسجيل الخروج</button></div>`;
-  }
-
-  if(!isAdmin){
-    return `<div class="panel"><h2>غير مصرّح</h2><p>هذه الصفحة لمالك المكتبة فقط.</p><p><a class="btn" href="#/">العودة للمكتبة</a> <button class="btn sec" data-act="logout">تسجيل الخروج</button></p></div>`;
-  }
-
-  const e = editing ? lectures.find(l => l.id === editing) : null;
-  const list = filtered();
-
-  const opt = (arr, v) =>
-    arr.map(x => `<option ${v===x?"selected":""}>${x}</option>`).join("");
-
+  if(adminErr && !isAdmin) return `<div class="panel"><h2>تعذر التحقق من الصلاحية</h2><p>المشكلة في الاتصال بالإنترنت وليست في حسابك.</p><button class="btn" data-act="retryadmin">إعادة المحاولة</button> <button class="btn sec" data-act="logout">تسجيل الخروج</button></div>`;
+  if(!isAdmin) return `<div class="panel"><h2>غير مصرّح</h2><p>هذه الصفحة لمالك المكتبة فقط.</p><p><a class="btn" href="#/">العودة للمكتبة</a> <button class="btn sec" data-act="logout">تسجيل الخروج</button></p></div>`;
+  const e = editing ? lectures.find(l => l.id === editing) : null, list = filtered();
+  const opt = (arr, v) => arr.map(x => `<option ${v===x?"selected":""}>${x}</option>`).join("");
   return `<p class="crumb"><a href="#/">← المكتبة</a> · <a href="#" data-act="logout">تسجيل الخروج</a></p>
   <div class="panel"><h2>${e?"تعديل محاضرة":"إضافة محاضرة"}</h2>
    <label>المادة</label><select id="f-sub">${subjects.map(s => `<option value="${esc(s.id)}" ${e&&e.subject_id===s.id?"selected":""}>${esc(s.name_ar)} — ${esc(s.name_en)}</option>`).join("")}</select>
