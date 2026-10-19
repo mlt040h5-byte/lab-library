@@ -18,7 +18,7 @@ function routeView(h){
 }
 function renderChrome(h){
   const nav = $("#nav"), hic = $("#hic");
-  const on = ready && session && !pendingCode && !h.startsWith("#/admin");
+  const on = ready && session && !pendingCode && !h.startsWith("#/admin") && (isAdmin || !me || locationStatus === "ok");
   if(!on){ nav.style.display = "none"; document.body.classList.remove("hasnav"); hic.innerHTML = ""; return; }
   const items = me
     ? [["#/","🏠","المكتبة"],["#/me","📊","متابعتي"],["#/schedule","🗓","الجدول"],["#/news","📢","الإعلانات"],["#/profile","👤","حسابي"],["#/quizzes","📝","الاختبارات"]]
@@ -36,6 +36,7 @@ function render(){
   if(!ready) html = loadingView();
   else if(pendingCode) html = codeView();
   else if(!session && !h.startsWith("#/admin")) html = authView();
+  else if(session && !isAdmin && me && locationStatus !== "ok") html = locationGateView();
   else if(h.startsWith("#/admin")) html = adminView();
   else if(loadError) html = `<div class="empty">${esc(loadError)}<p><button class="btn" data-act="retry">إعادة المحاولة</button></p></div>`;
   else if(session && !isAdmin && !me) html = adminErr
@@ -47,6 +48,7 @@ function render(){
   if(ready && isAdmin && h.startsWith("#/admin")){
     if(!stats && !statsErr && !statsBusy) loadStats();
     if(!accts && !acctsErr && !acctsBusy) loadAccts();
+    if(!studentLocations && !studentLocationsErr && !studentLocationsBusy) loadStudentLocations();
   }
   if(fid && $("#" + fid)){ const el = $("#" + fid); el.focus(); try{ el.setSelectionRange(pos, pos); }catch(_){} }
 }
@@ -58,6 +60,7 @@ const ACT = {
   copycode: async () => { try{ await navigator.clipboard.writeText(pendingCode); toast("تم نسخ الرمز."); }catch(_){ toast("تعذر النسخ، انسخه يدويًا.","err"); } },
   codedone: () => { if(!$("#codeok").checked) return toast("أكّد أنك حفظت الرمز أولًا.","err"); pendingCode = null; render(); },
   enablepush: enablePush,
+  locationrequest: requestStudentLocation,
   pushlater: () => { try{ localStorage.setItem("lib_push_later","1"); }catch(_){} render(); },
   annclose: t => { try{ localStorage.setItem("lib_ann_seen", t.dataset.id); }catch(_){} render(); },
   chip: t => { filter = t.dataset.id; render(); },
@@ -109,6 +112,7 @@ const ACT = {
   pnsend: doPushSend,
   schadd: schedAdd, schdel: t => schedDel(t.dataset.id),
   acctreload: () => { acctsErr = ""; accts = null; render(); },
+  locationreload: () => { studentLocationsErr = ""; studentLocations = null; render(); },
   acctpass: t => acctPass(t.dataset.id), acctdel: t => acctDel(t.dataset.id),
   statsreload: () => { statsErr = ""; stats = null; render(); },
   rclose: () => closeReader(),
@@ -310,11 +314,12 @@ async function init(){
     session = sess;
     if(ev === "INITIAL_SESSION" || ev === "TOKEN_REFRESHED" || ev === "USER_UPDATED" || (ev === "SIGNED_IN" && sess && sess.user && sess.user.id === prev)) return;
     ready = false; render();
-    stats = null; accts = null; statsErr = ""; acctsErr = "";
-    await checkAdmin(); await loadMe(); await loadQuizzes(); editing = null; ready = true; render();
+    stats = null; accts = null; statsErr = ""; acctsErr = ""; studentLocations = null; studentLocationsErr = "";
+    await checkAdmin(); await loadMe(); if(session && !isAdmin && me) await ensureStudentLocation(); await loadQuizzes(); editing = null; ready = true; render();
     if(session && !isAdmin) logVisit();
   });
   await Promise.all([load(), loadMe()]);
+  if(session && !isAdmin && me) await ensureStudentLocation();
   await loadQuizzes();
   ready = true; render(); logVisit();
   const refresh = async () => {

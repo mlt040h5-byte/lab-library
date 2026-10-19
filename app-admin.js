@@ -1,6 +1,7 @@
 /* ===== لوحة الإدارة ===== */
 let stats = null, statsErr = "", statsBusy = false;
 let accts = null, acctsErr = "", acctsBusy = false, acctQ = "";
+let studentLocations = null, studentLocationsErr = "", studentLocationsBusy = false;
 
 /* ---------- دخول المالك ---------- */
 async function doAdminLogin(){
@@ -208,6 +209,25 @@ async function loadAccts(){
   }catch(e){ accts = null; acctsErr = "تعذر تحميل الحسابات."; }
   acctsBusy = false; render();
 }
+async function loadStudentLocations(){
+  if(studentLocationsBusy || !isAdmin) return;
+  studentLocationsBusy = true;
+  try{
+    const r = await sb.from("student_locations").select("user_id,latitude,longitude,accuracy_m,captured_at,updated_at").order("updated_at",{ascending:false});
+    if(r.error){ studentLocations = null; studentLocationsErr = "تعذر تحميل المواقع: " + r.error.message; }
+    else { studentLocations = r.data || []; studentLocationsErr = ""; }
+  }catch(e){ studentLocations = null; studentLocationsErr = "تعذر تحميل مواقع الطلاب."; }
+  studentLocationsBusy = false; render();
+}
+function locationsPanel(){
+  if(studentLocationsErr) return `<div class="panel"><h2>📍 مواقع الطلاب</h2><p class="hint">${esc(studentLocationsErr)}</p><p class="hint">تأكد من تنفيذ ملف SQL المرفق في Supabase وإضافة سياسات الأمان.</p><button class="btn sec sm" data-act="locationreload">إعادة المحاولة</button></div>`;
+  if(!studentLocations) return `<div class="panel"><h2>📍 مواقع الطلاب</h2><p class="hint">جارٍ تحميل المواقع…</p></div>`;
+  const nameFor = id => (accts || []).find(a => a.user_id === id);
+  return `<div class="panel"><h2>📍 مواقع الطلاب</h2><p class="hint">تظهر هذه البيانات للمسؤول فقط. الموقع محفوظ من آخر دخول ناجح للطالب.</p>
+    ${studentLocations.length ? studentLocations.map(x => { const a = nameFor(x.user_id); const lat = Number(x.latitude), lon = Number(x.longitude); const valid = Number.isFinite(lat) && Number.isFinite(lon); const map = valid ? `https://www.google.com/maps?q=${lat},${lon}` : "#"; return `<div class="lec" style="margin:8px 0"><h3>${esc(a?.display_name || "طالب")} ${a?.username ? `<span class="hint" dir="ltr">@${esc(a.username)}</span>` : ""}</h3><div class="m">آخر تحديث: ${esc(fmtDT(x.updated_at || x.captured_at))}</div><div class="m" dir="ltr">${valid ? `${lat.toFixed(5)}, ${lon.toFixed(5)}` : "إحداثيات غير صالحة"}${x.accuracy_m != null ? ` · دقة تقريبية ${Math.round(Number(x.accuracy_m))} م` : ""}</div><p><a class="btn sec sm" href="${map}" target="_blank" rel="noopener" ${valid ? "" : 'aria-disabled="true"'}>فتح على خرائط Google</a></p><details><summary>معرّف الحساب</summary><small dir="ltr">${esc(x.user_id)}</small></details></div>`; }).join("") : `<p class="hint">لم يسجّل أي طالب موقعه بعد.</p>`}
+    <p><button class="btn sec sm" data-act="locationreload">تحديث المواقع</button></p></div>`;
+}
+
 function acctsPanel(){
   if(acctsErr) return `<div class="panel"><h2>👥 حسابات الطلاب</h2><p class="hint">${esc(acctsErr)}</p><button class="btn sec sm" data-act="acctreload">إعادة المحاولة</button></div>`;
   if(!accts) return `<div class="panel"><h2>👥 حسابات الطلاب</h2><p class="hint">جارٍ التحميل…</p></div>`;
@@ -287,6 +307,7 @@ function adminView(){
   ${annPanel()}
   ${schedPanel()}
   ${acctsPanel()}
+  ${locationsPanel()}
   <div class="panel"><h2>🎨 مظهر المكتبة</h2>
    <label>لون الخلفية</label><input id="bg-color" type="color" value="${esc(settings.bg_color||"#f4f7f9")}" style="height:48px;padding:4px">
    <label>أو صورة خلفية (JPG / PNG / WEBP)</label><input id="bg-file" type="file" accept="image/jpeg,image/png,image/webp">

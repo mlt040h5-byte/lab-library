@@ -21,6 +21,7 @@ let sb = null, session = null, isAdmin = false, adminErr = false, adminFor = nul
 let subjects = [], lectures = [], settings = {}, anns = [], sched = [];
 let prog = new Map(), notes = [], notifs = [], reads = new Set(), subCount = null;
 let q = "", nq = "", filter = "all", fKind = "", fSem = "", fDone = "", dashTab = "saved";
+let locationStatus = "idle", locationError = "", locationBusy = false;
 let editing = null, busy = false, loadError = "", authTab = "login", pendingCode = null, curLec = null, colorTouched = false;
 
 function toast(msg, type="ok"){
@@ -109,6 +110,69 @@ async function logVisit(){
     const r = await sb.from("visits").insert({visitor:id});
     if(!r.error) localStorage.setItem("lib_vlast", String(Date.now()));
   }catch(_){}
+}
+
+
+
+/* ---------- إذن الموقع للطلاب: تحديث مرة عند كل دخول ---------- */
+function locationGateView(){
+  const title = locationStatus === "requesting" ? "جارٍ تحديد موقعك…" :
+    locationStatus === "denied" ? "إذن الموقع مرفوض" :
+    locationStatus === "error" ? "تعذر حفظ الموقع" : "السماح بالوصول إلى الموقع";
+  const detail = locationStatus === "denied"
+    ? "إذن الموقع مرفوض من المتصفح. افتح إعدادات الموقع لهذا الموقع في المتصفح، وغيّر الإذن إلى السماح، ثم ارجع واضغط إعادة المحاولة."
+    : locationStatus === "error"
+    ? esc(locationError || "تأكد من تشغيل خدمة الموقع والاتصال بالإنترنت، ثم أعد المحاولة.")
+    : locationStatus === "requesting"
+    ? "يرجى الانتظار. لا نجمع موقعك في الخلفية؛ يتم تحديثه عند فتح المكتبة فقط."
+    : "للمتابعة إلى المكتبة، اسمح بتحديد موقع جهازك. سيُحفظ آخر موقع مع وقت التحديث، ولن يظهر إلا للمسؤول المصرّح له. لا يتم تتبّعك باستمرار في الخلفية.";
+  return `<div class="panel" style="max-width:560px;margin:24px auto;text-align:center"><h2>📍 ${title}</h2><p>${detail}</p>${locationStatus === "requesting" ? `<p>قد يستغرق تحديد الموقع بضع ثوانٍ…</p>` : `<p><button class="btn" data-act="locationrequest">${locationStatus === "denied" || locationStatus === "error" ? "إعادة المحاولة" : "السماح وتحديد موقعي"}</button></p>`}<p><button class="btn sec" data-act="logout">تسجيل الخروج</button></p><p class="hint">يستخدم التطبيق موقعك عند الدخول فقط، وليس تتبّعًا مستمرًا.</p></div>`;
+}
+async function ensureStudentLocation(){
+  if(!session || isAdmin || !me) { locationStatus = "idle"; return true; }
+  locationError = "";
+  try{
+    if(navigator.permissions && navigator.permissions.query){
+      const perm = await navigator.permissions.query({name:"geolocation"});
+      if(perm.state === "granted") return captureStudentLocation();
+      locationStatus = perm.state === "denied" ? "denied" : "needs-permission";
+    } else locationStatus = "needs-permission";
+  }catch(_){ locationStatus = "needs-permission"; }
+  render();
+  return false;
+}
+function requestStudentLocation(){
+  if(!session || isAdmin || !me) return;
+  return captureStudentLocation();
+}
+function captureStudentLocation(){
+  if(!navigator.geolocation){
+    locationStatus = "error"; locationError = "هذا المتصفح لا يدعم تحديد الموقع. افتح المكتبة في متصفح حديث مع تفعيل الموقع."; render(); return Promise.resolve(false);
+  }
+  locationStatus = "requesting"; locationError = ""; render();
+  return new Promise(resolve => {
+    navigator.geolocation.getCurrentPosition(async pos => {
+      try{
+        const coords = pos.coords;
+        const r = await sb.rpc("save_student_location", {
+          p_latitude:coords.latitude,
+          p_longitude:coords.longitude,
+          p_accuracy_m:Number.isFinite(coords.accuracy) ? Math.round(coords.accuracy) : null,
+          p_captured_at:new Date().toISOString()
+        });
+        if(r.error) throw r.error;
+        locationStatus = "ok"; locationError = ""; render(); resolve(true);
+      }catch(e){
+        locationStatus = "error"; locationError = "تعذر حفظ الموقع في قاعدة البيانات. قد تحتاج إلى إنشاء جدول student_locations وتفعيل صلاحياته أولًا."; render(); resolve(false);
+      }
+    }, err => {
+      locationStatus = err && err.code === 1 ? "denied" : "error";
+      locationError = err && err.code === 2 ? "تعذر تحديد الموقع. فعّل خدمة الموقع في الجهاز وتأكد من اتصالك بالإنترنت." :
+        err && err.code === 3 ? "انتهت مهلة تحديد الموقع. تأكد من تشغيل خدمة الموقع ثم أعد المحاولة." :
+        "لم يتم منح إذن الموقع. اسمح للموقع من إعدادات المتصفح ثم أعد المحاولة.";
+      render(); resolve(false);
+    }, {enableHighAccuracy:true, timeout:15000, maximumAge:0});
+  });
 }
 
 /* ---------- الإشعارات الداخلية ---------- */
