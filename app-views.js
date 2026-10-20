@@ -62,9 +62,15 @@ function subjectCard(s){
   const ls = lectures.filter(l => l.subject_id === s.id), d = ls.filter(l => pg(l.id).completed).length;
   return `<a class="sub" href="#/s/${esc(s.id)}"><span class="ic">${esc(s.icon)}</span><b>${esc(s.name_ar)}</b><small>${esc(s.name_en)}</small><div class="n">${ls.length} محاضرة${me?` · ${d} مكتملة`:""}</div>${me&&ls.length?`<div class="pbar"><i style="width:${pct(d,ls.length)}%"></i></div>`:""}</a>`;
 }
+function publicRankingBlock(){
+  if(!publicRanking || !publicRanking.published) return "";
+  const list = (publicRanking.students || []).slice(0,10);
+  return `<div class="panel"><h3>🏆 التصنيف الدراسي للطلاب</h3><p class="hint">يعتمد الترتيب على متوسط درجات الاختبارات وإكمال المحاضرات بالتساوي.</p>
+  ${list.length ? list.map((x,i) => `<div class="row"><b>${i+1}. ${esc(x.display_name || "طالب")}</b><span class="hint">النتيجة ${Number(x.overall_score||0).toFixed(1)}% · الاختبارات ${Number(x.quiz_percent||0).toFixed(1)}% · المحاضرات ${Number(x.completion_percent||0).toFixed(1)}%</span></div>`).join("") : `<p class="hint">لا توجد بيانات كافية لعرض التصنيف بعد.</p>`}</div>`;
+}
 function homeView(){
   const searching = q || filter !== "all" || fKind || fSem;
-  let h = nextBlock() + pinnedBlock() + banner() + pushCard() + `<h2>المكتبة</h2>${searchBlock(true)}`;
+  let h = nextBlock() + pinnedBlock() + banner() + publicRankingBlock() + pushCard() + `<h2>المكتبة</h2>${searchBlock(true)}`;
   if(searching){
     const subs = q ? subjects.filter(s => norm(s.name_ar).includes(norm(q)) || norm(s.name_en).includes(norm(q))) : [];
     if(subs.length) h += `<div class="chips">${subs.map(s => `<a class="chipb" href="#/s/${esc(s.id)}">${esc(s.icon)} ${esc(s.name_ar)}</a>`).join("")}</div>`;

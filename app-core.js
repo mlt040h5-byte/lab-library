@@ -21,7 +21,8 @@ let sb = null, session = null, isAdmin = false, adminErr = false, adminFor = nul
 let subjects = [], lectures = [], settings = {}, anns = [], sched = [];
 let prog = new Map(), notes = [], notifs = [], reads = new Set(), subCount = null;
 let q = "", nq = "", filter = "all", fKind = "", fSem = "", fDone = "", dashTab = "saved";
-let locationStatus = "idle", locationError = "", locationBusy = false;
+let locationStatus = "idle", locationError = "", locationBusy = false, accessBusy = false;
+let publicRanking = {published:false, students:[]}, adminRanking = null, rankingErr = "", rankingBusy = false;
 let editing = null, busy = false, loadError = "", authTab = "login", pendingCode = null, curLec = null, colorTouched = false;
 
 function toast(msg, type="ok"){
@@ -114,19 +115,29 @@ async function logVisit(){
 
 
 
-/* ---------- إذن الموقع للطلاب: تحديث مرة عند كل دخول ---------- */
+/* ---------- إذن الموقع والإشعارات للطلاب ---------- */
+function notificationPermission(){
+  try{ return ("Notification" in window) ? Notification.permission : "unsupported"; }
+  catch(_){ return "unsupported"; }
+}
+function studentAccessNeedsSetup(){
+  if(!session || isAdmin || !me) return false;
+  if(accessBusy) return true;
+  const pp = notificationPermission();
+  return locationStatus !== "ok" || (pp === "default" && ("serviceWorker" in navigator) && ("PushManager" in window));
+}
 function locationGateView(){
-  const title = locationStatus === "requesting" ? "جارٍ تحديد موقعك…" :
-    locationStatus === "denied" ? "إذن الموقع مرفوض" :
-    locationStatus === "error" ? "تعذر حفظ الموقع" : "السماح بالوصول إلى الموقع";
-  const detail = locationStatus === "denied"
-    ? "إذن الموقع مرفوض من المتصفح. افتح إعدادات الموقع لهذا الموقع في المتصفح، وغيّر الإذن إلى السماح، ثم ارجع واضغط إعادة المحاولة."
+  const pp = notificationPermission();
+  const title = "تفعيل الاشعارات والموقع";
+  const detail = accessBusy || locationStatus === "requesting"
+    ? "يرجى الانتظار حتى يكتمل التفعيل. يتم تحديث الموقع عند فتح المكتبة فقط، ولا يوجد تتبّع مستمر في الخلفية."
+    : locationStatus === "denied"
+    ? "اسمح للمكتبة بالوصول إلى الموقع من إعدادات المتصفح، ثم اضغط «تفعيل» مجددًا. يمكنك رفض الإشعارات، لكن يلزم إذن الموقع لتسجيل آخر موقع دخول."
     : locationStatus === "error"
     ? esc(locationError || "تأكد من تشغيل خدمة الموقع والاتصال بالإنترنت، ثم أعد المحاولة.")
-    : locationStatus === "requesting"
-    ? "يرجى الانتظار. لا نجمع موقعك في الخلفية؛ يتم تحديثه عند فتح المكتبة فقط."
-    : "للمتابعة إلى المكتبة، اسمح بتحديد موقع جهازك. سيُحفظ آخر موقع مع وقت التحديث، ولن يظهر إلا للمسؤول المصرّح له. لا يتم تتبّعك باستمرار في الخلفية.";
-  return `<div class="panel" style="max-width:560px;margin:24px auto;text-align:center"><h2>📍 ${title}</h2><p>${detail}</p>${locationStatus === "requesting" ? `<p>قد يستغرق تحديد الموقع بضع ثوانٍ…</p>` : `<p><button class="btn" data-act="locationrequest">${locationStatus === "denied" || locationStatus === "error" ? "إعادة المحاولة" : "السماح وتحديد موقعي"}</button></p>`}<p><button class="btn sec" data-act="logout">تسجيل الخروج</button></p><p class="hint">يستخدم التطبيق موقعك عند الدخول فقط، وليس تتبّعًا مستمرًا.</p></div>`;
+    : "تفعيل لوصول إشعارات المحاضرات";
+  const pstatus = pp === "granted" ? "الإشعارات: مفعّلة ✓" : pp === "denied" ? "الإشعارات: محظورة من إعدادات المتصفح" : pp === "unsupported" ? "الإشعارات غير مدعومة في هذا المتصفح" : "الإشعارات: بانتظار الإذن";
+  return `<div class="panel" style="max-width:560px;margin:24px auto;text-align:center"><h2>🔔📍 ${title}</h2><p>${detail}</p><p class="hint">${pstatus}</p><p class="hint">سيُحفظ آخر موقع عند فتح المكتبة فقط، ولن يظهر إلا للمسؤول المصرّح له.</p>${accessBusy || locationStatus === "requesting" ? `<p>يرجى الانتظار…</p>` : `<p><button class="btn" data-act="activateaccess">تفعيل</button></p>`}</div>`;
 }
 async function ensureStudentLocation(){
   if(!session || isAdmin || !me) { locationStatus = "idle"; return true; }
@@ -141,10 +152,19 @@ async function ensureStudentLocation(){
   render();
   return false;
 }
-function requestStudentLocation(){
-  if(!session || isAdmin || !me) return;
-  return captureStudentLocation();
+async function activateStudentAccess(){
+  if(!session || isAdmin || !me || accessBusy) return;
+  try{ localStorage.removeItem("lib_push_later"); }catch(_){}
+  accessBusy = true;
+  render();
+  /* Start both permission requests directly from the button gesture. */
+  const pushTask = enablePush(true);
+  const locationTask = captureStudentLocation();
+  await Promise.allSettled([pushTask, locationTask]);
+  accessBusy = false;
+  render();
 }
+function requestStudentLocation(){ return activateStudentAccess(); }
 function captureStudentLocation(){
   if(!navigator.geolocation){
     locationStatus = "error"; locationError = "هذا المتصفح لا يدعم تحديد الموقع. افتح المكتبة في متصفح حديث مع تفعيل الموقع."; render(); return Promise.resolve(false);
@@ -163,7 +183,7 @@ function captureStudentLocation(){
         if(r.error) throw r.error;
         locationStatus = "ok"; locationError = ""; render(); resolve(true);
       }catch(e){
-        locationStatus = "error"; locationError = "تعذر حفظ الموقع في قاعدة البيانات. قد تحتاج إلى إنشاء جدول student_locations وتفعيل صلاحياته أولًا."; render(); resolve(false);
+        locationStatus = "error"; locationError = "تعذر حفظ الموقع في قاعدة البيانات. تحقق من إعداد جدول student_locations وصلاحياته."; render(); resolve(false);
       }
     }, err => {
       locationStatus = err && err.code === 1 ? "denied" : "error";
@@ -307,17 +327,21 @@ async function delNote(id){
 
 /* ---------- الإشعارات الخارجية (Push) ---------- */
 const b64u = s => { const p = "=".repeat((4 - s.length%4)%4), r = atob((s+p).replace(/-/g,"+").replace(/_/g,"/")); return Uint8Array.from([...r].map(c => c.charCodeAt(0))); };
-async function enablePush(){
+async function enablePush(silent=false){
   try{
-    if(!("serviceWorker" in navigator) || !("PushManager" in window)) return toast("هذا المتصفح لا يدعم الإشعارات.","err");
+    if(!("Notification" in window) || !("serviceWorker" in navigator) || !("PushManager" in window)){
+      if(!silent) toast("هذا المتصفح لا يدعم الإشعارات.","err");
+      return false;
+    }
     const perm = await Notification.requestPermission();
-    if(perm !== "granted"){ toast("لم يتم السماح بالإشعارات.","err"); render(); return; }
+    if(perm !== "granted"){ if(!silent) toast("لم يتم السماح بالإشعارات.","err"); render(); return false; }
     const reg = await navigator.serviceWorker.ready;
     let sub = await reg.pushManager.getSubscription();
     if(!sub) sub = await reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:b64u(VAPID_PUBLIC)});
     const j = sub.toJSON();
     const r = await sb.from("push_subs").insert({endpoint:j.endpoint, p256dh:j.keys.p256dh, auth:j.keys.auth});
     if(r.error && r.error.code !== "23505") throw r.error;
-    toast("تم تفعيل الإشعارات."); render();
-  }catch(e){ toast("تعذر تفعيل الإشعارات: " + (e.message || e), "err"); }
+    if(!silent) toast("تم تفعيل الإشعارات.");
+    render(); return true;
+  }catch(e){ if(!silent) toast("تعذر تفعيل الإشعارات: " + (e.message || e), "err"); return false; }
 }

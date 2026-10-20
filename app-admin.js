@@ -255,6 +255,55 @@ async function acctDel(id){
   toast("تم حذف الحساب."); accts = null; acctsErr = ""; render();
 }
 
+/* ---------- التصنيف الدراسي للطلاب ---------- */
+async function loadPublicRanking(){
+  try{
+    const r = await sb.rpc("get_student_ranking");
+    if(r.error){ publicRanking = {published:false, students:[]}; return; }
+    const d = r.data || {};
+    publicRanking = {published:!!d.published, students:Array.isArray(d.students)?d.students:[]};
+  }catch(_){ publicRanking = {published:false, students:[]}; }
+}
+async function loadAdminRanking(){
+  if(rankingBusy || !isAdmin) return;
+  rankingBusy = true;
+  try{
+    const r = await sb.rpc("admin_student_ranking");
+    if(r.error){ adminRanking = null; rankingErr = "تعذر تحميل التصنيف: " + r.error.message; }
+    else {
+      const d = r.data || {};
+      adminRanking = {published:!!d.published, students:Array.isArray(d.students)?d.students:[]};
+      rankingErr = "";
+    }
+  }catch(e){ adminRanking = null; rankingErr = "تعذر تحميل التصنيف الدراسي."; }
+  rankingBusy = false;
+  render();
+}
+async function toggleStudentRanking(){
+  if(!isAdmin) return;
+  const el = $("#rank-pub");
+  if(!el) return;
+  const published = !!el.checked;
+  const r = await sb.rpc("set_student_ranking_published", {p_published:published});
+  if(r.error) return toast("تعذر تغيير نشر التصنيف. تأكد من تنفيذ ملف student-ranking.sql. " + r.error.message, "err");
+  toast(published ? "تم نشر التصنيف للطلاب." : "تم إخفاء التصنيف عن الطلاب.");
+  rankingErr = ""; adminRanking = null;
+  await loadPublicRanking();
+  await loadAdminRanking();
+  render();
+}
+function rankingPanel(){
+  if(rankingErr) return `<div class="panel"><h2>🏆 تصنيف الطلاب</h2><p class="hint">${esc(rankingErr)}</p><p class="hint">نفّذ ملف student-ranking.sql في Supabase مرة واحدة لتجهيز التصنيف وصلاحياته.</p><button class="btn sec sm" data-act="rankingreload">إعادة المحاولة</button></div>`;
+  if(!adminRanking) return `<div class="panel"><h2>🏆 تصنيف الطلاب</h2><p class="hint">جارٍ تحميل التصنيف…</p></div>`;
+  const list = adminRanking.students || [];
+  return `<div class="panel"><h2>🏆 تصنيف الطلاب</h2>
+    <p class="hint">الدرجة النهائية = 50% من متوسط الاختبارات + 50% من نسبة إكمال المحاضرات. البيانات خاصة بالمالك حتى تختار نشرها.</p>
+    <label style="font-weight:400"><input id="rank-pub" type="checkbox" style="width:auto" ${adminRanking.published?"checked":""}> إظهار التصنيف لجميع الطلاب</label>
+    <p><button class="btn sm" data-act="rankingtoggle">حفظ حالة النشر</button></p>
+    ${list.length ? list.map((x,i) => `<div class="lec" style="margin:7px 0"><h3>${i+1}. ${esc(x.display_name || "طالب")} <span class="hint" dir="ltr">@${esc(x.username || "")}</span></h3><div class="m">النتيجة النهائية ${Number(x.overall_score||0).toFixed(1)}% · متوسط الاختبارات ${Number(x.quiz_percent||0).toFixed(1)}% · إكمال المحاضرات ${Number(x.completion_percent||0).toFixed(1)}%</div><div class="m">المحاضرات المكتملة ${Number(x.completed||0)} من ${Number(x.lecture_total||0)} · محاولات الاختبارات ${Number(x.attempts||0)}</div></div>`).join("") : `<p class="hint">لا توجد حسابات طلاب لعرضها.</p>`}
+    <p><button class="btn sec sm" data-act="rankingreload">تحديث التصنيف</button></p></div>`;
+}
+
 /* ---------- إحصائيات الدخول ---------- */
 async function loadStats(){
   if(statsBusy) return; statsBusy = true;
@@ -307,6 +356,7 @@ function adminView(){
   ${annPanel()}
   ${schedPanel()}
   ${acctsPanel()}
+  ${rankingPanel()}
   ${locationsPanel()}
   <div class="panel"><h2>🎨 مظهر المكتبة</h2>
    <label>لون الخلفية</label><input id="bg-color" type="color" value="${esc(settings.bg_color||"#f4f7f9")}" style="height:48px;padding:4px">

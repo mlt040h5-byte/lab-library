@@ -18,7 +18,7 @@ function routeView(h){
 }
 function renderChrome(h){
   const nav = $("#nav"), hic = $("#hic");
-  const on = ready && session && !pendingCode && !h.startsWith("#/admin") && (isAdmin || !me || locationStatus === "ok");
+  const on = ready && session && !pendingCode && !h.startsWith("#/admin") && (isAdmin || !me || !studentAccessNeedsSetup());
   if(!on){ nav.style.display = "none"; document.body.classList.remove("hasnav"); hic.innerHTML = ""; return; }
   const items = me
     ? [["#/","🏠","المكتبة"],["#/me","📊","متابعتي"],["#/schedule","🗓","الجدول"],["#/news","📢","الإعلانات"],["#/profile","👤","حسابي"],["#/quizzes","📝","الاختبارات"]]
@@ -36,7 +36,7 @@ function render(){
   if(!ready) html = loadingView();
   else if(pendingCode) html = codeView();
   else if(!session && !h.startsWith("#/admin")) html = authView();
-  else if(session && !isAdmin && me && locationStatus !== "ok") html = locationGateView();
+  else if(session && !isAdmin && me && studentAccessNeedsSetup()) html = locationGateView();
   else if(h.startsWith("#/admin")) html = adminView();
   else if(loadError) html = `<div class="empty">${esc(loadError)}<p><button class="btn" data-act="retry">إعادة المحاولة</button></p></div>`;
   else if(session && !isAdmin && !me) html = adminErr
@@ -49,6 +49,7 @@ function render(){
     if(!stats && !statsErr && !statsBusy) loadStats();
     if(!accts && !acctsErr && !acctsBusy) loadAccts();
     if(!studentLocations && !studentLocationsErr && !studentLocationsBusy) loadStudentLocations();
+    if(!adminRanking && !rankingErr && !rankingBusy) loadAdminRanking();
   }
   if(fid && $("#" + fid)){ const el = $("#" + fid); el.focus(); try{ el.setSelectionRange(pos, pos); }catch(_){} }
 }
@@ -59,8 +60,9 @@ const ACT = {
   login: doLogin, register: doRegister, recover: doRecover, logout: doLogout,
   copycode: async () => { try{ await navigator.clipboard.writeText(pendingCode); toast("تم نسخ الرمز."); }catch(_){ toast("تعذر النسخ، انسخه يدويًا.","err"); } },
   codedone: () => { if(!$("#codeok").checked) return toast("أكّد أنك حفظت الرمز أولًا.","err"); pendingCode = null; render(); },
-  enablepush: enablePush,
+  enablepush: () => enablePush(),
   locationrequest: requestStudentLocation,
+  activateaccess: activateStudentAccess,
   pushlater: () => { try{ localStorage.setItem("lib_push_later","1"); }catch(_){} render(); },
   annclose: t => { try{ localStorage.setItem("lib_ann_seen", t.dataset.id); }catch(_){} render(); },
   chip: t => { filter = t.dataset.id; render(); },
@@ -112,6 +114,8 @@ const ACT = {
   pnsend: doPushSend,
   schadd: schedAdd, schdel: t => schedDel(t.dataset.id),
   acctreload: () => { acctsErr = ""; accts = null; render(); },
+  rankingreload: () => { rankingErr = ""; adminRanking = null; render(); },
+  rankingtoggle: toggleStudentRanking,
   locationreload: () => { studentLocationsErr = ""; studentLocations = null; render(); },
   acctpass: t => acctPass(t.dataset.id), acctdel: t => acctDel(t.dataset.id),
   statsreload: () => { statsErr = ""; stats = null; render(); },
@@ -314,8 +318,8 @@ async function init(){
     session = sess;
     if(ev === "INITIAL_SESSION" || ev === "TOKEN_REFRESHED" || ev === "USER_UPDATED" || (ev === "SIGNED_IN" && sess && sess.user && sess.user.id === prev)) return;
     ready = false; render();
-    stats = null; accts = null; statsErr = ""; acctsErr = ""; studentLocations = null; studentLocationsErr = "";
-    await checkAdmin(); await loadMe(); if(session && !isAdmin && me) await ensureStudentLocation(); await loadQuizzes(); editing = null; ready = true; render();
+    stats = null; accts = null; statsErr = ""; acctsErr = ""; studentLocations = null; studentLocationsErr = ""; adminRanking = null; rankingErr = ""; rankingBusy = false;
+    await checkAdmin(); await loadMe(); if(session && !isAdmin && me) await ensureStudentLocation(); await loadQuizzes(); await loadPublicRanking(); editing = null; ready = true; render();
     if(session && !isAdmin) logVisit();
   });
   await Promise.all([load(), loadMe()]);
@@ -326,7 +330,7 @@ async function init(){
     if(busy || editing || document.hidden || $("#reader").style.display === "flex") return;
     if(route().startsWith("#/note/")) return;
     const a = document.activeElement; if(a && /INPUT|TEXTAREA|SELECT/.test(a.tagName)) return;
-    await load(); if(me) await loadNotifs(); await loadQuizzes(); render();
+    await load(); if(me) await loadNotifs(); await loadQuizzes(); await loadPublicRanking(); if(isAdmin && route().startsWith("#/admin")) await loadAdminRanking(); render();
   };
   document.addEventListener("visibilitychange", refresh);
   setInterval(refresh, 90000);
