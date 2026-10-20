@@ -127,17 +127,19 @@ function studentAccessNeedsSetup(){
   return locationStatus !== "ok" || (pp === "default" && ("serviceWorker" in navigator) && ("PushManager" in window));
 }
 function locationGateView(){
+  /* بعد الضغط على «تفعيل»، اعرض واجهة الانتظار فقط كما طلب المستخدم. */
+  if(accessBusy || locationStatus === "requesting"){
+    return `<div class="empty" style="margin:48px auto;text-align:center">يرجى الانتظار</div>`;
+  }
   const pp = notificationPermission();
   const title = "تفعيل الاشعارات والموقع";
-  const detail = accessBusy || locationStatus === "requesting"
-    ? "يرجى الانتظار حتى يكتمل التفعيل. يتم تحديث الموقع عند فتح المكتبة فقط، ولا يوجد تتبّع مستمر في الخلفية."
-    : locationStatus === "denied"
+  const detail = locationStatus === "denied"
     ? "اسمح للمكتبة بالوصول إلى الموقع من إعدادات المتصفح، ثم اضغط «تفعيل» مجددًا. يمكنك رفض الإشعارات، لكن يلزم إذن الموقع لتسجيل آخر موقع دخول."
     : locationStatus === "error"
     ? esc(locationError || "تأكد من تشغيل خدمة الموقع والاتصال بالإنترنت، ثم أعد المحاولة.")
     : "تفعيل لوصول إشعارات المحاضرات";
   const pstatus = pp === "granted" ? "الإشعارات: مفعّلة ✓" : pp === "denied" ? "الإشعارات: محظورة من إعدادات المتصفح" : pp === "unsupported" ? "الإشعارات غير مدعومة في هذا المتصفح" : "الإشعارات: بانتظار الإذن";
-  return `<div class="panel" style="max-width:560px;margin:24px auto;text-align:center"><h2>🔔📍 ${title}</h2><p>${detail}</p><p class="hint">${pstatus}</p><p class="hint">سيُحفظ آخر موقع عند فتح المكتبة فقط، ولن يظهر إلا للمسؤول المصرّح له.</p>${accessBusy || locationStatus === "requesting" ? `<p>يرجى الانتظار…</p>` : `<p><button class="btn" data-act="activateaccess">تفعيل</button></p>`}</div>`;
+  return `<div class="panel" style="max-width:560px;margin:24px auto;text-align:center"><h2>🔔📍 ${title}</h2><p>${detail}</p><p class="hint">${pstatus}</p><p><button class="btn" data-act="activateaccess">تفعيل</button></p></div>`;
 }
 async function ensureStudentLocation(){
   if(!session || isAdmin || !me) { locationStatus = "idle"; return true; }
