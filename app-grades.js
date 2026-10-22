@@ -7,38 +7,47 @@
   let gradeBusy = false;
   let gradeEditingId = null;
   let gradeAdminStudent = "";
-  let gradeNoticeChecked = false;
+  let gradeLoadedFor = null;
 
   const gradeEsc = s => String(s ?? "").replace(/[&<>"']/g, c => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
   }[c]));
 
-  const gradeToday = () => new Date().toLocaleDateString("en-CA");
+  const gradeToday = () => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  };
+
   const gradeFmt = d => {
     if (!d) return "—";
     return new Date(d + "T12:00:00").toLocaleDateString("ar-IQ");
   };
+
   const gradeNum = n => Number(n || 0).toLocaleString("ar-IQ", {
     maximumFractionDigits: 2
   });
-  const gradePct = (score, max) => max > 0 ? Math.round(score / max * 100) : 0;
+
+  const gradePct = (score, max) => max > 0
+    ? Math.round(score / max * 100)
+    : 0;
+
   const gradeSubName = id => {
-    const s = (window.subjects || []).find(x => String(x.id) === String(id));
-    return s ? s.name || s.title || s.subject_name || String(s.id) : String(id);
+    const s = (subjects || []).find(x => String(x.id) === String(id));
+    return s ? (s.name_ar || s.name || s.title || String(s.id)) : String(id);
   };
 
   function gradeNoticeKey() {
-    return "manual_grades_notice_v1_" + (window.session?.user?.id || "unknown");
+    return "manual_grades_notice_v1_" + (session?.user?.id || "unknown");
   }
 
   function gradeNotice() {
-    if (!window.me || window.isAdmin) return;
+    if (!me || isAdmin || !session?.user?.id) return;
+
     try {
       if (localStorage.getItem(gradeNoticeKey()) === "1") return;
     } catch (_) {}
 
-    const old = document.getElementById("grades-notice");
-    if (old) return;
+    if (document.getElementById("grades-notice")) return;
 
     const modal = document.createElement("div");
     modal.id = "grades-notice";
@@ -57,44 +66,51 @@
       </div>`;
 
     document.body.appendChild(modal);
+
     document.getElementById("grades-notice-ok").onclick = () => {
-      try { localStorage.setItem(gradeNoticeKey(), "1"); } catch (_) {}
+      try {
+        localStorage.setItem(gradeNoticeKey(), "1");
+      } catch (_) {}
       modal.remove();
     };
   }
 
   async function gradeLoad() {
-    if (!window.sb || !window.session) {
+    if (!sb || !session?.user?.id) {
       gradeRows = [];
       return;
     }
 
     gradeBusy = true;
+
     try {
-      let query = window.sb.from("student_grades").select("*")
+      let query = sb.from("student_grades").select("*")
         .order("exam_date", { ascending: false })
         .order("created_at", { ascending: false });
 
-      if (window.isAdmin) {
-        if (gradeAdminStudent) query = query.eq("user_id", gradeAdminStudent);
+      if (isAdmin) {
+        if (gradeAdminStudent) {
+          query = query.eq("user_id", gradeAdminStudent);
+        }
       } else {
-        query = query.eq("user_id", window.session.user.id);
+        query = query.eq("user_id", session.user.id);
       }
 
       const result = await query.limit(1000);
       if (result.error) throw result.error;
+
       gradeRows = result.data || [];
     } catch (err) {
       gradeRows = [];
-      window.toast("تعذر تحميل سجل الدرجات: " + (err.message || "خطأ"), "err");
+      toast("تعذر تحميل سجل الدرجات: " + (err.message || "خطأ"), "err");
     } finally {
       gradeBusy = false;
     }
   }
 
   function gradeSummary(rows) {
-    const totalScore = rows.reduce((s, r) => s + Number(r.score), 0);
-    const totalMax = rows.reduce((s, r) => s + Number(r.max_score), 0);
+    const totalScore = rows.reduce((s, r) => s + Number(r.score || 0), 0);
+    const totalMax = rows.reduce((s, r) => s + Number(r.max_score || 0), 0);
     const average = totalMax ? Math.round(totalScore / totalMax * 100) : 0;
 
     return `
@@ -106,7 +122,6 @@
 
   function gradeSubjectStats(rows) {
     const ids = [...new Set(rows.map(r => String(r.subject_id)))];
-
     if (!ids.length) return "";
 
     return `
@@ -114,8 +129,8 @@
         <h3>المعدلات حسب المادة</h3>
         ${ids.map(id => {
           const list = rows.filter(r => String(r.subject_id) === id);
-          const earned = list.reduce((s, r) => s + Number(r.score), 0);
-          const possible = list.reduce((s, r) => s + Number(r.max_score), 0);
+          const earned = list.reduce((s, r) => s + Number(r.score || 0), 0);
+          const possible = list.reduce((s, r) => s + Number(r.max_score || 0), 0);
           const average = possible ? Math.round(earned / possible * 100) : 0;
 
           return `
@@ -133,9 +148,10 @@
       ? gradeRows.find(r => r.id === gradeEditingId)
       : null;
 
-    const subjectOptions = (window.subjects || []).map(s => {
-      const name = s.name || s.title || s.subject_name || s.id;
+    const subjectOptions = (subjects || []).map(s => {
+      const name = s.name_ar || s.name || s.title || s.id;
       const selected = editing && String(editing.subject_id) === String(s.id);
+
       return `<option value="${gradeEsc(s.id)}" ${selected ? "selected" : ""}>
         ${gradeEsc(name)}
       </option>`;
@@ -164,7 +180,8 @@
           </div>
           <div>
             <label for="grade-score">درجتك</label>
-            <input id="grade-score" type="number" min="0" max="100"
+            <input id="grade-score" type="number" min="0"
+              max="${editing?.max_score ?? 100}"
               step="0.01" required value="${editing?.score ?? ""}">
           </div>
         </div>
@@ -178,8 +195,8 @@
           placeholder="ملاحظات عن الامتحان">${gradeEsc(editing?.notes || "")}</textarea>
 
         <div class="acts">
-          <button class="btn" data-grade-act="save">
-            ${editing ? "حفظ التعديلات" : "حفظ الدرجة"}
+          <button class="btn" data-grade-act="save" ${gradeBusy ? "disabled" : ""}>
+            ${gradeBusy ? "جارٍ الحفظ…" : editing ? "حفظ التعديلات" : "حفظ الدرجة"}
           </button>
           ${editing ? `<button class="btn sec" data-grade-act="cancel">إلغاء</button>` : ""}
         </div>
@@ -200,20 +217,24 @@
         <div class="lec">
           <h3>${gradeEsc(gradeSubName(r.subject_id))}</h3>
           <p>${gradeEsc(r.exam_type)}</p>
+
           <div class="stats" style="margin-top:10px">
             <div class="stat"><b>${gradeNum(score)} / ${gradeNum(max)}</b>الدرجة</div>
             <div class="stat"><b>${percent}%</b>النسبة</div>
           </div>
+
           <div class="pbar"><i style="width:${percent}%"></i></div>
           <div class="m">التاريخ: ${gradeEsc(gradeFmt(r.exam_date))}</div>
           ${r.notes ? `<p>${gradeEsc(r.notes)}</p>` : ""}
-          ${adminMode ? `<div class="hint">معرّف الطالب: <span dir="ltr">${gradeEsc(r.user_id)}</span></div>` : `
-            <div class="acts">
-              <button class="btn sec sm" data-grade-act="edit"
-                data-id="${gradeEsc(r.id)}">تعديل</button>
-              <button class="btn del sm" data-grade-act="delete"
-                data-id="${gradeEsc(r.id)}">حذف</button>
-            </div>`}
+
+          ${adminMode
+            ? `<div class="hint">معرّف الطالب: <span dir="ltr">${gradeEsc(r.user_id)}</span></div>`
+            : `<div class="acts">
+                <button class="btn sec sm" data-grade-act="edit"
+                  data-id="${gradeEsc(r.id)}">تعديل</button>
+                <button class="btn del sm" data-grade-act="delete"
+                  data-id="${gradeEsc(r.id)}">حذف</button>
+              </div>`}
         </div>`;
     }).join("");
   }
@@ -235,11 +256,11 @@
   }
 
   function gradeView() {
-    if (!window.session) {
+    if (!session) {
       return `<div class="empty">يرجى تسجيل الدخول أولًا.</div>`;
     }
 
-    if (window.isAdmin) {
+    if (isAdmin) {
       return `
         <h2>سجل درجات الطلاب</h2>
         ${gradeAdminPicker()}
@@ -247,7 +268,7 @@
         ${gradeList(gradeRows, true)}`;
     }
 
-    if (!window.me) {
+    if (!me) {
       return `<div class="empty">تعذر تحميل حساب الطالب.</div>`;
     }
 
@@ -262,90 +283,113 @@
   }
 
   async function gradeOpen() {
-    if (!window.session) {
-      window.location.hash = "#/";
+    if (!session?.user?.id) {
+      location.hash = "#/";
       return;
     }
 
+    const currentUserId = session.user.id;
+    gradeLoadedFor = currentUserId;
+
     await gradeLoad();
+
+    // إذا تغيّر الحساب أثناء تحميل البيانات، لا تعرض بيانات الحساب السابق.
+    if (!session?.user?.id || session.user.id !== currentUserId) return;
+
     gradeEditingId = null;
     gradeNotice();
-    window.render();
+    render();
   }
 
   async function gradeSave() {
-    if (gradeBusy) return;
+    if (gradeBusy || !session?.user?.id || isAdmin) return;
 
     const subjectId = document.getElementById("grade-subject")?.value || "";
     const examType = document.getElementById("grade-type")?.value.trim() || "";
     const max = Number(document.getElementById("grade-max")?.value);
     const score = Number(document.getElementById("grade-score")?.value);
     const date = document.getElementById("grade-date")?.value || "";
-    const notes = document.getElementById("grade-notes")?.value.trim() || "";
+    const notesText = document.getElementById("grade-notes")?.value.trim() || "";
 
-    if (!subjectId) return window.toast("اختر المادة.", "err");
-    if (!examType || examType.length > 100) return window.toast("اكتب نوع الامتحان.", "err");
+    if (!subjectId) return toast("اختر المادة.", "err");
+    if (!(subjects || []).some(s => String(s.id) === String(subjectId))) {
+      return toast("المادة المختارة غير موجودة.", "err");
+    }
+    if (!examType || examType.length > 100) {
+      return toast("اكتب نوع الامتحان.", "err");
+    }
     if (!Number.isFinite(max) || max < 5 || max > 100) {
-      return window.toast("الدرجة الكاملة يجب أن تكون بين 5 و100.", "err");
+      return toast("الدرجة الكاملة يجب أن تكون بين 5 و100.", "err");
     }
     if (!Number.isFinite(score) || score < 0 || score > max) {
-      return window.toast("تأكد أن درجتك بين صفر والدرجة الكاملة.", "err");
+      return toast("تأكد أن درجتك بين صفر والدرجة الكاملة.", "err");
     }
-    if (!date) return window.toast("اختر تاريخ الامتحان.", "err");
-    if (notes.length > 1000) return window.toast("الملاحظات طويلة جدًا.", "err");
+    if (!date) return toast("اختر تاريخ الامتحان.", "err");
+    if (notesText.length > 1000) return toast("الملاحظات طويلة جدًا.", "err");
 
+    const userId = session.user.id;
     const payload = {
-      user_id: window.session.user.id,
+      user_id: userId,
       subject_id: subjectId,
       exam_type: examType,
       max_score: max,
       score,
       exam_date: date,
-      notes
+      notes: notesText
     };
 
     gradeBusy = true;
+    render();
+
     try {
       let result;
+
       if (gradeEditingId) {
-        result = await window.sb.from("student_grades").update(payload)
+        result = await sb.from("student_grades")
+          .update(payload)
           .eq("id", gradeEditingId)
-          .eq("user_id", window.session.user.id);
+          .eq("user_id", userId);
       } else {
-        result = await window.sb.from("student_grades").insert(payload);
+        result = await sb.from("student_grades").insert(payload);
       }
 
       if (result.error) throw result.error;
 
       gradeEditingId = null;
       await gradeLoad();
-      window.toast("تم حفظ الدرجة.");
-      window.render();
+      toast("تم حفظ الدرجة.");
     } catch (err) {
-      window.toast("تعذر حفظ الدرجة: " + (err.message || "خطأ"), "err");
+      toast("تعذر حفظ الدرجة: " + (err.message || "خطأ"), "err");
     } finally {
       gradeBusy = false;
+      render();
     }
   }
 
   async function gradeDelete(id) {
-    const row = gradeRows.find(r => r.id === id);
-    if (!row || !window.session) return;
+    if (!session?.user?.id || isAdmin) return;
+
+    const row = gradeRows.find(r => String(r.id) === String(id));
+    if (!row || row.user_id !== session.user.id) {
+      return toast("لا يمكن حذف هذا السجل.", "err");
+    }
+
     if (!confirm("هل تريد حذف سجل هذه الدرجة؟")) return;
 
     try {
-      const result = await window.sb.from("student_grades").delete()
+      const result = await sb.from("student_grades")
+        .delete()
         .eq("id", id)
-        .eq("user_id", window.session.user.id);
+        .eq("user_id", session.user.id);
 
       if (result.error) throw result.error;
 
       gradeEditingId = null;
       await gradeLoad();
-      window.toast("تم حذف الدرجة.");
-      window.render();
+      toast("تم حذف الدرجة.");
+      render();
     } catch (err) {
-      window.toast("تعذر حذف الدرجة: " + (err.message || "خطأ"), "err");
+      toast("تعذر حذف الدرجة: " + (err.message || "خطأ"), "err");
     }
   }
 
@@ -356,79 +400,111 @@
     const action = button.dataset.gradeAct;
 
     if (action === "save") return gradeSave();
+
     if (action === "cancel") {
       gradeEditingId = null;
-      window.render();
+      render();
       return;
     }
+
     if (action === "edit") {
-      gradeEditingId = button.dataset.id;
-      window.render();
+      if (isAdmin) return;
+      const row = gradeRows.find(r => String(r.id) === String(button.dataset.id));
+      if (!row || row.user_id !== session?.user?.id) {
+        return toast("لا يمكن تعديل هذا السجل.", "err");
+      }
+      gradeEditingId = row.id;
+      render();
       return;
     }
+
     if (action === "delete") return gradeDelete(button.dataset.id);
 
     if (action === "admin-filter") {
+      if (!isAdmin) return;
       gradeAdminStudent = document.getElementById("grade-admin-user")?.value.trim() || "";
+
+      if (gradeAdminStudent && !/^[0-9a-f-]{36}$/i.test(gradeAdminStudent)) {
+        return toast("تحقق من معرّف الطالب.", "err");
+      }
+
       await gradeLoad();
-      window.render();
+      render();
       return;
     }
 
     if (action === "admin-all") {
+      if (!isAdmin) return;
       gradeAdminStudent = "";
       await gradeLoad();
-      window.render();
+      render();
     }
   });
 
-  // إضافة صفحة السجل إلى التوجيه الحالي دون استبدال بقية الصفحات.
-  const originalRouteView = window.routeView;
-  window.routeView = function (hash) {
+  // إضافة سجل الدرجات إلى التوجيه الحالي.
+  const originalRouteView = routeView;
+  routeView = function (hash) {
     if (hash === "#/grades") return gradeView();
     return originalRouteView(hash);
   };
 
-  const originalRenderChrome = window.renderChrome;
-  window.renderChrome = function (hash) {
+  // إضافة رابط السجل إلى شريط التنقل دون حذف روابط التطبيق.
+  const originalRenderChrome = renderChrome;
+  renderChrome = function (hash) {
     originalRenderChrome(hash);
+
     const nav = document.getElementById("nav");
     if (!nav || nav.style.display === "none") return;
 
-    if (!nav.querySelector('[data-grades-nav="1"]')) {
-      const link = document.createElement("a");
+    let link = nav.querySelector('[data-grades-nav="1"]');
+
+    if (!link) {
+      link = document.createElement("a");
       link.href = "#/grades";
       link.dataset.gradesNav = "1";
-      link.innerHTML = "<b>📈</b>سجل درجاتي";
+      link.innerHTML = "<b>📈</b>سجل الدرجات";
       nav.appendChild(link);
     }
 
-    nav.querySelectorAll('[data-grades-nav="1"]').forEach(link => {
-      link.classList.toggle("on", hash === "#/grades");
-    });
+    link.classList.toggle("on", hash === "#/grades");
   };
 
-  const originalRender = window.render;
-  window.render = function () {
+  // دعم فتح #/grades مباشرةً أو الانتقال إليها من داخل التطبيق.
+  const originalRender = render;
+  render = function () {
     originalRender();
-    if (window.location.hash === "#/grades" && window.ready && window.session) {
-      if (!gradeNoticeChecked && !window.isAdmin && window.me) {
-        gradeNoticeChecked = true;
-        gradeNotice();
-      }
-    }
-  };
 
-  window.addEventListener("hashchange", () => {
-    if (window.location.hash === "#/grades") {
-      gradeEditingId = null;
+    if (location.hash !== "#/grades" || !ready || !session?.user?.id) return;
+
+    const userId = session.user.id;
+
+    if (gradeLoadedFor !== userId && !gradeBusy) {
+      gradeLoadedFor = userId;
       gradeOpen();
     }
+  };
+
+  // عند تغيير المسار إلى صفحة الدرجات، حمّل بيانات الحساب الحالي.
+  window.addEventListener("hashchange", () => {
+    if (location.hash !== "#/grades") {
+      gradeEditingId = null;
+      return;
+    }
+
+    if (!session?.user?.id) return;
+
+    gradeLoadedFor = session.user.id;
+    gradeOpen();
   });
 
-  // إتاحة تحديث البيانات بعد تسجيل الدخول أو تغيير الحساب.
+  // يمكن استدعاؤها عند تغيير الحساب لإعادة تحميل السجلات.
   window.reloadStudentGrades = async function () {
-    gradeNoticeChecked = false;
-    if (window.location.hash === "#/grades") await gradeOpen();
+    gradeLoadedFor = null;
+    gradeRows = [];
+    gradeEditingId = null;
+
+    if (location.hash === "#/grades" && session?.user?.id) {
+      await gradeOpen();
+    }
   };
 })();
