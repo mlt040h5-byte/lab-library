@@ -93,15 +93,36 @@ function parseTf(raw){
 
 /* ---------- تحميل ---------- */
 async function loadQuizzes(){
-  attempts = []; adminAttempts = [];
+  attempts = [];
+  adminAttempts = [];
+
   try{
-    const a = await sb.from("quizzes").select("*, quiz_questions(count)").order("created_at", {ascending:false});
-    quizzes = (a.data || []).map(z => ({...z, qn:(z.quiz_questions && z.quiz_questions[0] && z.quiz_questions[0].count) || 0}));
-    if(isAdmin){ const b = await sb.from("quiz_attempts").select("quiz_id,score,total"); adminAttempts = b.data || []; }
-    else if(me){ const b = await sb.from("quiz_attempts").select("*").order("created_at", {ascending:false}).limit(300); attempts = b.data || []; }
+    const a = await sb.from("quizzes")
+      .select("*, quiz_questions(count)")
+      .order("created_at", {ascending:false});
+
+    quizzes = (a.data || []).map(z => ({
+      ...z,
+      qn:(z.quiz_questions && z.quiz_questions[0] && z.quiz_questions[0].count) || 0
+    }));
+
+    if(isAdmin){
+      const b = await sb.from("quiz_attempts").select("quiz_id,score,total");
+      adminAttempts = b.data || [];
+    } else if(me){
+      const b = await sb.from("quiz_attempts")
+        .select("*")
+        .order("created_at", {ascending:false})
+        .limit(300);
+      attempts = b.data || [];
+    }
   }catch(_){}
 }
-const bestPct = id => { const a = attempts.filter(x => x.quiz_id === id); return a.length ? Math.max(...a.map(x => pct(x.score, x.total))) : null; };
+const bestPct = id => {
+  const a = attempts.filter(x => x.quiz_id === id);
+  return a.length ? Math.max(...a.map(x => pct(x.score, x.total))) : null;
+};
+
 function quizStatsBlock(){
   if(!me) return "";
   if(!attempts.length) return `<div class="panel"><h3>الاختبارات</h3><p class="hint">لم تُجرِ أي اختبار بعد. <a href="#/quizzes">ابدأ اختبارًا</a></p></div>`;
@@ -113,32 +134,54 @@ function quizStatsBlock(){
 function resultsBlock(){
   if(!attempts.length) return "";
   const bySub = {};
-  attempts.forEach(a => { const z = quizzes.find(x => x.id === a.quiz_id); if(!z) return; const o = bySub[z.subject_id] || (bySub[z.subject_id] = {s:0, t:0, n:0}); o.s += a.score; o.t += a.total; o.n++; });
-  const rows = Object.entries(bySub).map(([sid, o]) => ({sid, p:pct(o.s, o.t), n:o.n})).sort((a,b) => a.p - b.p);
+  attempts.forEach(a => {
+    const z = quizzes.find(x => x.id === a.quiz_id);
+    if(!z) return;
+    const o = bySub[z.subject_id] || (bySub[z.subject_id] = {s:0, t:0, n:0});
+    o.s += a.score; o.t += a.total; o.n++;
+  });
+
+  const rows = Object.entries(bySub)
+    .map(([sid, o]) => ({sid, p:pct(o.s, o.t), n:o.n}))
+    .sort((a,b) => a.p - b.p);
+
   const lab = p => p >= 80 ? "قوي 💪" : p >= 60 ? "جيد" : "يحتاج مراجعة 📚";
   const trend = attempts.slice(0, 8).reverse();
   const avg = pct(attempts.reduce((s,a) => s + a.score, 0), attempts.reduce((s,a) => s + a.total, 0));
+
   return `<div class="panel"><h3>📊 نتائجي</h3>
    <div class="stats"><div class="stat"><b>${attempts.length}</b>محاولة</div><div class="stat"><b>${avg}%</b>المتوسط العام</div></div>
-   ${rows.map(r => { const s = subj(r.sid); return `<div style="margin:10px 0"><div style="display:flex;justify-content:space-between;gap:8px"><span>${s?esc(s.icon+" "+s.name_ar):""}</span><span class="hint">${r.p}% · ${lab(r.p)}${r.p < 60 ? ` · <a href="#/s/${esc(r.sid)}">راجع المحاضرات</a>` : ""}</span></div><div class="pbar"><i style="width:${r.p}%"></i></div></div>`; }).join("")}
+   ${rows.map(r => {
+     const s = subj(r.sid);
+     return `<div style="margin:10px 0"><div style="display:flex;justify-content:space-between;gap:8px"><span>${s?esc(s.icon+" "+s.name_ar):""}</span><span class="hint">${r.p}% · ${lab(r.p)}${r.p < 60 ? ` · <a href="#/s/${esc(r.sid)}">راجع المحاضرات</a>` : ""}</span></div><div class="pbar"><i style="width:${r.p}%"></i></div></div>`;
+   }).join("")}
    <h3>تطور مستواك (آخر ${trend.length} محاولات)</h3>
-   <div style="display:flex;align-items:flex-end;gap:6px;height:90px">${trend.map(a => { const p = pct(a.score, a.total); return `<div style="flex:1;text-align:center;font-size:.7rem"><div style="height:${Math.max(4, p*0.7)}px;background:var(--brand);border-radius:6px 6px 0 0"></div>${p}%</div>`; }).join("")}</div></div>`;
+   <div style="display:flex;align-items:flex-end;gap:6px;height:90px">${trend.map(a => {
+     const p = pct(a.score, a.total);
+     return `<div style="flex:1;text-align:center;font-size:.7rem"><div style="height:${Math.max(4, p*0.7)}px;background:var(--brand);border-radius:6px 6px 0 0"></div>${p}%</div>`;
+   }).join("")}</div></div>`;
 }
 function quizzesView(){
   const list = quizzes.filter(z => z.published);
   const groups = subjects.map(s => ({s, items:list.filter(z => z.subject_id === s.id)})).filter(g => g.items.length);
+
   return `<h2>📝 الاختبارات</h2>${resultsBlock()}
-  ${groups.length ? groups.map(g => `<h3>${esc(g.s.icon)} ${esc(g.s.name_ar)}</h3>${g.items.map(z => { const b = bestPct(z.id);
-    return `<div class="lec"><h3>${esc(z.title)}</h3><div class="m">${z.qn} سؤال · ${b === null ? "لم تُحاول بعد" : "أفضل نتيجة: " + b + "%"}</div><div class="acts"><a class="btn sm" href="#/quiz/${z.id}">${b === null ? "ابدأ الاختبار" : "أعد المحاولة"}</a></div></div>`; }).join("")}`).join("") : '<div class="empty">لا توجد اختبارات منشورة بعد.</div>'}`;
+  ${groups.length ? groups.map(g => `<h3>${esc(g.s.icon)} ${esc(g.s.name_ar)}</h3>${g.items.map(z => {
+    const b = bestPct(z.id);
+    return `<div class="lec"><h3>${esc(z.title)}</h3><div class="m">${z.qn} سؤال · ${b === null ? "لم تُحاول بعد" : "أفضل نتيجة: " + b + "%"}</div><div class="acts"><a class="btn sm" href="#/quiz/${z.id}">${b === null ? "ابدأ الاختبار" : "أعد المحاولة"}</a></div></div>`;
+  }).join("")}`).join("") : '<div class="empty">لا توجد اختبارات منشورة بعد.</div>'}`;
 }
 async function startQuiz(z){
   qz = {quiz:z, qs:[], i:0, ans:{}, done:false, loading:true, busy:false, saved:null, err:""};
   const mine = qz;
   const r = await sb.from("quiz_questions").select("*").eq("quiz_id", z.id).order("position");
+
   if(qz !== mine) return;
+
   qz.loading = false;
   if(r.error || !(r.data || []).length) qz.err = r.error ? "تعذر تحميل الأسئلة. تأكد من الاتصال." : "لا توجد أسئلة في هذا الاختبار بعد.";
   else qz.qs = r.data;
+
   render();
 }
 function quizView(id){
@@ -146,9 +189,11 @@ function quizView(id){
   if(!z) return `<div class="empty">الاختبار غير موجود.</div><p><a class="btn" href="#/quizzes">الاختبارات</a></p>`;
   if(!qz || qz.quiz.id !== id){ startQuiz(z); return loadingView(); }
   if(qz.loading) return loadingView();
+
   const back = isAdmin ? "#/admin" : "#/quizzes";
   if(qz.err) return `<p class="crumb"><a href="${back}">← رجوع</a></p><div class="empty">${esc(qz.err)}</div>`;
   if(qz.done) return quizResultView();
+
   const q = qz.qs[qz.i], a = qz.ans[q.id], n = qz.qs.length;
   const opts = q.options.map((o, oi) => {
     let cls = "opt", mark = "";
@@ -160,6 +205,7 @@ function quizView(id){
     }
     return `<button class="${cls}" data-act="qpick" data-oi="${oi}" ${a ? "disabled" : ""}><span>${esc(o)}</span><b>${mark}</b></button>`;
   }).join("");
+
   return `<p class="crumb"><a href="${back}">← رجوع</a></p><h2>${esc(qz.quiz.title)}</h2>
   <div class="pbar"><i style="width:${pct(qz.i + (a ? 1 : 0), n)}%"></i></div><p class="hint">سؤال ${qz.i + 1} من ${n}</p>
   <div class="panel"><h3 style="line-height:1.8">${esc(q.text)}</h3>${opts}
@@ -171,69 +217,169 @@ function quizResultView(){
   const n = qz.qs.length, ok = qz.qs.filter(q => qz.ans[q.id] && qz.ans[q.id].correct).length, p = pct(ok, n);
   const wrong = qz.qs.filter(q => !(qz.ans[q.id] && qz.ans[q.id].correct));
   const msg = p >= 80 ? "ممتاز 🎉" : p >= 60 ? "جيد، واصل المراجعة 👍" : "تحتاج إلى مزيد من المراجعة 📚";
+
   return `<p class="crumb"><a href="${isAdmin ? "#/admin" : "#/quizzes"}">← الاختبارات</a></p>
   <div class="panel"><h2>النتيجة: ${ok} من ${n} (${p}%)</h2><div class="pbar"><i style="width:${p}%"></i></div><p>${msg}</p>
    ${qz.saved === false ? '<p class="hint" style="color:var(--err)">تعذر حفظ نتيجتك بسبب الاتصال، لكن إجاباتك ظاهرة أمامك.</p>' : ""}
    <p><button class="btn" data-act="qretry">إعادة الاختبار</button> <a class="btn sec" href="${isAdmin ? "#/admin" : "#/quizzes"}">رجوع</a></p></div>
-  ${wrong.length ? `<h3>الأسئلة التي أخطأت فيها (${wrong.length})</h3>${wrong.map(q => { const a = qz.ans[q.id];
-    return `<div class="lec"><p style="margin:0;color:var(--ink)">${esc(q.text)}</p>${a ? `<div class="m">إجابتك: ✗ ${esc(q.options[a.choice])}</div><div class="m" style="color:var(--ok)">الصحيحة: ✓ ${esc(q.options[a.ci])}</div>${a.ex ? `<div class="m">💡 ${esc(a.ex)}</div>` : ""}` : '<div class="m">لم تُجب عن هذا السؤال.</div>'}</div>`; }).join("")}` : ""}`;
+  ${wrong.length ? `<h3>الأسئلة التي أخطأت فيها (${wrong.length})</h3>${wrong.map(q => {
+    const a = qz.ans[q.id];
+    return `<div class="lec"><p style="margin:0;color:var(--ink)">${esc(q.text)}</p>${a ? `<div class="m">إجابتك: ✗ ${esc(q.options[a.choice])}</div><div class="m" style="color:var(--ok)">الصحيحة: ✓ ${esc(q.options[a.ci])}</div>${a.ex ? `<div class="m">💡 ${esc(a.ex)}</div>` : ""}` : '<div class="m">لم تُجب عن هذا السؤال.</div>'}</div>`;
+  }).join("")}` : ""}`;
 }
 async function qPick(oi){
   if(!qz || qz.loading || qz.done || qz.busy) return;
-  const q = qz.qs[qz.i]; if(qz.ans[q.id]) return;
+
+  const q = qz.qs[qz.i];
+  if(qz.ans[q.id]) return;
+
   qz.busy = true;
   const r = await sb.rpc("check_answer", {p_question:q.id, p_choice:oi});
   qz.busy = false;
-  if(r.error){ toast("تعذر التحقق من الإجابة. تأكد من الاتصال وحاول مجددًا.","err"); return; }
-  qz.ans[q.id] = {choice:oi, correct:!!r.data.correct, ci:r.data.correct_index, ex:r.data.explanation || ""};
+
+  if(r.error){
+    toast("تعذر التحقق من الإجابة. تأكد من الاتصال وحاول مجددًا.","err");
+    return;
+  }
+
+  qz.ans[q.id] = {
+    choice:oi,
+    correct:!!r.data.correct,
+    ci:r.data.correct_index,
+    ex:r.data.explanation || ""
+  };
   render();
 }
 async function qNext(){
   if(!qz) return;
-  if(qz.i + 1 < qz.qs.length){ qz.i++; render(); scrollTo(0,0); return; }
-  qz.done = true; render(); scrollTo(0,0);
-  if(isAdmin){ qz.saved = null; return; }
-  const answers = {}; qz.qs.forEach(q => { if(qz.ans[q.id]) answers[q.id] = qz.ans[q.id].choice; });
+
+  if(qz.i + 1 < qz.qs.length){
+    qz.i++;
+    render();
+    scrollTo(0,0);
+    return;
+  }
+
+  qz.done = true;
+  render();
+  scrollTo(0,0);
+
+  if(isAdmin){
+    qz.saved = null;
+    return;
+  }
+
+  const answers = {};
+  qz.qs.forEach(q => {
+    if(qz.ans[q.id]) answers[q.id] = qz.ans[q.id].choice;
+  });
+
   const mine = qz;
   const r = await sb.rpc("submit_attempt", {p_quiz:qz.quiz.id, p_answers:answers});
+
   if(qz !== mine) return;
   if(r.error){ qz.saved = false; render(); return; }
+
   qz.saved = true;
-  attempts.unshift({quiz_id:qz.quiz.id, score:r.data.score, total:r.data.total, created_at:new Date().toISOString()});
+  attempts.unshift({
+    quiz_id:qz.quiz.id,
+    score:r.data.score,
+    total:r.data.total,
+    created_at:new Date().toISOString()
+  });
   render();
 }
 
-/* ---------- إدارة الاختبارات (المالك) ---------- */
+/* ---------- إدارة الاختبارات ---------- */
 function draftHtml(){
   if(!draft.length) return "";
+
   const missing = draft.filter(d => d.correct === null).length;
+
   return `<h3>المسودة: ${draft.length} سؤال ${missing ? `<span class="new" style="background:var(--err)">${missing} بلا إجابة صحيحة</span>` : ""}</h3>
   ${draft.map((d, i) => `<div class="lec" style="margin:8px 0"><div class="m">${i+1} · ${d.qtype === "tf" ? "صح/خطأ" : "اختيار من متعدد"}</div>
    <textarea class="dq-text" data-qi="${i}" rows="2" maxlength="2000">${esc(d.text)}</textarea>
    ${d.options.map((o, oi) => `<button class="opt ${d.correct === oi ? "ok" : ""}" data-act="dcorrect" data-qi="${i}" data-oi="${oi}"><span>${esc(o)}</span><b>${d.correct === oi ? "✓" : ""}</b></button>`).join("")}
    ${d.correct === null ? '<p class="hint" style="color:var(--err)">اضغط على الإجابة الصحيحة.</p>' : ""}
    <button class="btn del sm" data-act="dqdel" data-qi="${i}">حذف السؤال</button></div>`).join("")}
-  <p><button class="btn" data-act="qsave" ${busy ? "disabled" : ""}>${busy ? "جارٍ الحفظ…" : "حفظ الأسئلة"}</button> <button class="btn sec" data-act="dclear">مسح المسودة</button></p>`;
+  <p><button class="btn" data-act="qsave" ${busy ? "disabled" : ""}>${busy ? "جارٍ الحفظ…" : "حفظ الاختبار"}</button> <button class="btn sec" data-act="dclear">مسح المسودة</button></p>`;
 }
 function qlistHtml(){
   if(!qopenList) return `<p class="hint">جارٍ التحميل…</p>`;
-  return qopenList.map((q, i) => { const k = Array.isArray(q.quiz_keys) ? (q.quiz_keys[0] && q.quiz_keys[0].correct) : (q.quiz_keys && q.quiz_keys.correct);
-    return `<div class="row"><b>${i+1}. ${esc(q.text)}</b>${q.options.map((o, oi) => `<div class="m" style="${oi === k ? "color:var(--ok);font-weight:700" : ""}">${oi === k ? "✓" : "○"} ${esc(o)}</div>`).join("")}<button class="btn del sm" data-act="qqdel" data-id="${q.id}">حذف السؤال</button></div>`; }).join("") || '<p class="hint">لا توجد أسئلة.</p>';
+
+  return qopenList.map((q, i) => {
+    const k = Array.isArray(q.quiz_keys)
+      ? (q.quiz_keys[0] && q.quiz_keys[0].correct)
+      : (q.quiz_keys && q.quiz_keys.correct);
+
+    return `<div class="row"><b>${i+1}. ${esc(q.text)}</b>${q.options.map((o, oi) => `<div class="m" style="${oi === k ? "color:var(--ok);font-weight:700" : ""}">${oi === k ? "✓" : "○"} ${esc(o)}</div>`).join("")}<button class="btn del sm" data-act="qqdel" data-id="${q.id}">حذف السؤال</button></div>`;
+  }).join("") || '<p class="hint">لا توجد أسئلة.</p>';
 }
 function quizListHtml(){
   return quizzes.map(z => {
     const at = adminAttempts.filter(a => a.quiz_id === z.id), s = subj(z.subject_id);
     const avg = at.length ? pct(at.reduce((x,a) => x + a.score, 0), at.reduce((x,a) => x + a.total, 0)) : null;
+
     return `<div class="lec" style="margin:8px 0"><h3>${esc(z.title)} ${z.published ? "" : '<span class="hint">(مخفي)</span>'}</h3>
      <div class="m">${s ? esc(s.name_ar) : ""} · ${z.qn} سؤال · ${at.length} محاولة${avg !== null ? ` · المتوسط ${avg}%` : ""}</div>
      <div class="acts"><button class="btn sec sm" data-act="qpub" data-id="${z.id}">${z.published ? "إخفاء" : "نشر"}</button><button class="btn sec sm" data-act="qshow" data-id="${z.id}">${qopen === z.id ? "إخفاء الأسئلة" : "عرض الأسئلة"}</button><button class="btn sec sm" data-act="qappend" data-id="${z.id}">+ أسئلة</button><a class="btn sec sm" href="#/quiz/${z.id}">تجربة</a><button class="btn del sm" data-act="qdel" data-id="${z.id}">حذف</button></div>
      ${qopen === z.id ? qlistHtml() : ""}</div>`;
   }).join("") || '<p class="hint">لا توجد اختبارات بعد.</p>';
 }
+
+/* ---------- قائمة مشرف المحتوى ---------- */
+function contentManagerQuizListHtml(){
+  return quizzes.map(z => {
+    const s = subj(z.subject_id);
+
+    return `<div class="lec" style="margin:8px 0">
+      <h3>${esc(z.title)}</h3>
+      <div class="m">${s ? esc(s.name_ar) : ""} · ${z.qn} سؤال · ${z.published ? "منشور" : "غير منشور"}</div>
+      <div class="acts">
+        <button class="btn del sm" data-act="qdel" data-id="${z.id}">🗑 حذف الاختبار</button>
+      </div>
+    </div>`;
+  }).join("") || '<p class="hint">لا توجد اختبارات حاليًا.</p>';
+}
+
+/* ---------- لوحة الاختبارات ---------- */
 function quizAdminPanel(){
+  if(isContentManager && !isAdmin){
+    const t = quizForm;
+    const firstSub = subjects[0] ? subjects[0].id : "";
+
+    return `<div class="panel"><h2>📝 إنشاء الاختبارات</h2>
+      <label>عنوان الاختبار</label>
+      <input id="qz-title" maxlength="200" value="${esc(t.title)}">
+
+      <label>المادة</label>
+      <select id="qz-subject">
+        ${subjects.map(s => `<option value="${esc(s.id)}" ${(t.subject || firstSub) === s.id ? "selected" : ""}>${esc(s.name_ar)}</option>`).join("")}
+      </select>
+
+      <label>نوع الأسئلة</label>
+      <select id="qz-type">
+        <option value="mcq" ${t.type === "mcq" ? "selected" : ""}>اختيار من متعدد (MCQ)</option>
+        <option value="tf" ${t.type === "tf" ? "selected" : ""}>صح وخطأ</option>
+      </select>
+
+      <label>الصق الأسئلة هنا</label>
+      <textarea id="qz-text" rows="8" dir="auto">${esc(t.text)}</textarea>
+
+      <p class="hint">بعد تحليل النص، حدّد الإجابة الصحيحة لكل سؤال ثم احفظ الاختبار. يُنشر الاختبار الجديد تلقائيًا.</p>
+      <p><button class="btn" data-act="qparse">تحليل النص</button></p>
+
+      ${draftHtml()}
+
+      <h3>الاختبارات الحالية (${quizzes.length})</h3>
+      ${contentManagerQuizListHtml()}
+    </div>`;
+  }
+
   const t = quizForm, target = quizzes.find(z => z.id === t.target), firstSub = subjects[0] ? subjects[0].id : "";
   const hintMcq = "الصق الأسئلة بأي صيغة معتادة: رقم السؤال، ثم الخيارات (أ ب ج د أو A B C D)، ثم سطر «الإجابة: ب». أو ضع علامة * بعد الخيار الصحيح. وإن لم تكن الإجابة موجودة فاخترها بعد التحليل.";
   const hintTf = "اكتب كل عبارة في سطر، وضع في آخرها (صح) أو (خطأ)، أو اكتب في السطر التالي «الإجابة: صح». وإن لم تكن موجودة فاخترها بعد التحليل.";
+
   return `<div class="panel"><h2>📝 الاختبارات</h2>
    <label>الوجهة</label><select id="qz-target"><option value="">اختبار جديد</option>${quizzes.map(z => `<option value="${z.id}" ${t.target === z.id ? "selected" : ""}>${esc(z.title)}</option>`).join("")}</select>
    ${target ? `<p class="hint">ستُضاف الأسئلة إلى «${esc(target.title)}».</p>` : `<label>عنوان الاختبار</label><input id="qz-title" maxlength="200" value="${esc(t.title)}">
@@ -246,13 +392,19 @@ function quizAdminPanel(){
    ${draftHtml()}
    <h3>الاختبارات الحالية (${quizzes.length})</h3>${quizListHtml()}</div>`;
 }
+
 function quizParse(){
   const raw = ($("#qz-text").value || "").trim();
   if(!raw) return toast("الصق نص الأسئلة أولًا.","err");
+
   const r = quizForm.type === "tf" ? parseTf(raw) : parseMcq(raw);
+
   if(!r.items.length) return toast("لم أتعرف على أي سؤال. تأكد من الصيغة المذكورة تحت الخانة.","err");
-  draft = draft.concat(r.items); quizForm.text = "";
+
+  draft = draft.concat(r.items);
+  quizForm.text = "";
   render();
+
   toast(`تم تحليل ${r.items.length} سؤال` + (r.skipped ? ` (تجاهلتُ ${r.skipped} نصًّا لم يكتمل)` : "") + ". راجعها ثم احفظ.");
 }
 async function quizSave(){
@@ -260,49 +412,116 @@ async function quizSave(){
   if(!draft.length) return toast("لا توجد أسئلة.","err");
   if(draft.some(d => d.correct === null)) return toast("حدّد الإجابة الصحيحة لكل سؤال.","err");
   if(draft.some(d => !String(d.text).trim())) return toast("يوجد سؤال بلا نص.","err");
-  const tg = quizForm.target, title = quizForm.title.trim(), subject = quizForm.subject || (subjects[0] ? subjects[0].id : "");
+
+  // لا يسمح لمشرف المحتوى بتحديد اختبار موجود للتعديل.
+  const tg = (isContentManager && !isAdmin) ? "" : quizForm.target;
+  const title = quizForm.title.trim();
+  const subject = quizForm.subject || (subjects[0] ? subjects[0].id : "");
+
   if(!tg && !title) return toast("اكتب عنوان الاختبار.","err");
-  busy = true; render();
-  const r = await sb.rpc("admin_save_quiz", {p_quiz:tg || null, p_title:title, p_subject:subject, p_published:quizForm.pub,
-    p_questions:draft.map(d => ({qtype:d.qtype, text:d.text.trim(), options:d.options, correct:d.correct, explanation:d.explanation || ""}))});
+
+  busy = true;
+  render();
+
+  const r = await sb.rpc("admin_save_quiz", {
+    p_quiz:tg || null,
+    p_title:title,
+    p_subject:subject,
+    p_published:(isContentManager && !isAdmin) ? true : quizForm.pub,
+    p_questions:draft.map(d => ({
+      qtype:d.qtype,
+      text:d.text.trim(),
+      options:d.options,
+      correct:d.correct,
+      explanation:d.explanation || ""
+    }))
+  });
+
   busy = false;
-  if(r.error){ render(); return toast("تعذر الحفظ: " + r.error.message, "err"); }
-  draft = []; quizForm.title = ""; quizForm.target = ""; qopen = null;
-  await loadQuizzes(); render(); toast("تم حفظ الاختبار.");
+
+  if(r.error){
+    render();
+    return toast("تعذر الحفظ: " + r.error.message, "err");
+  }
+
+  draft = [];
+  quizForm.title = "";
+  quizForm.target = "";
+  qopen = null;
+
+  await loadQuizzes();
+  render();
+  toast("تم حفظ الاختبار.");
 }
 async function quizShow(id){
-  if(qopen === id){ qopen = null; render(); return; }
-  qopen = id; qopenList = null; render();
-  const r = await sb.from("quiz_questions").select("*, quiz_keys(correct)").eq("quiz_id", id).order("position");
-  qopenList = r.data || []; render();
+  if(isContentManager && !isAdmin){
+    return toast("لا يملك مشرف المحتوى صلاحية عرض الإجابات الصحيحة.", "err");
+  }
+
+  if(qopen === id){
+    qopen = null;
+    render();
+    return;
+  }
+
+  qopen = id;
+  qopenList = null;
+  render();
+
+  const r = await sb.from("quiz_questions")
+    .select("*, quiz_keys(correct)")
+    .eq("quiz_id", id)
+    .order("position");
+
+  qopenList = r.data || [];
+  render();
 }
 async function quizAdminAct(kind, id){
+  // مشرف المحتوى يستطيع حذف الاختبار بالكامل فقط.
+  if(isContentManager && !isAdmin && kind !== "del"){
+    return toast("هذه العملية غير متاحة لمشرف المحتوى.", "err");
+  }
+
   if(kind === "pub"){
-    const z = quizzes.find(x => x.id === id); if(!z) return;
+    const z = quizzes.find(x => x.id === id);
+    if(!z) return;
+
     const r = await sb.from("quizzes").update({published:!z.published}).eq("id", id);
     if(r.error) return toast("تعذر التعديل: " + r.error.message, "err");
   } else if(kind === "del"){
     if(!confirm("حذف الاختبار وكل أسئلته ونتائج الطلاب فيه نهائيًا؟")) return;
+
     const r = await sb.from("quizzes").delete().eq("id", id);
     if(r.error) return toast("تعذر الحذف: " + r.error.message, "err");
-    if(qopen === id) qopen = null; toast("تم حذف الاختبار.");
+
+    if(qopen === id) qopen = null;
+    toast("تم حذف الاختبار.");
   } else if(kind === "qdel"){
     if(!confirm("حذف هذا السؤال نهائيًا؟")) return;
+
     const r = await sb.from("quiz_questions").delete().eq("id", id);
     if(r.error) return toast("تعذر الحذف: " + r.error.message, "err");
+
     qopenList = (qopenList || []).filter(q => q.id !== id);
   }
-  await loadQuizzes(); render();
+
+  await loadQuizzes();
+  render();
 }
 
 /* ---------- ربط الأحداث ---------- */
 const QUIZ_ACT = {
-  qpick: t => qPick(+t.dataset.oi), qnext: qNext, qretry: () => { qz = null; render(); },
-  qparse: quizParse, qsave: quizSave,
+  qpick: t => qPick(+t.dataset.oi),
+  qnext: qNext,
+  qretry: () => { qz = null; render(); },
+  qparse: quizParse,
+  qsave: quizSave,
   dcorrect: t => { const d = draft[+t.dataset.qi]; if(d){ d.correct = +t.dataset.oi; render(); } },
   dqdel: t => { draft.splice(+t.dataset.qi, 1); render(); },
   dclear: () => { draft = []; render(); },
-  qpub: t => quizAdminAct("pub", t.dataset.id), qdel: t => quizAdminAct("del", t.dataset.id), qqdel: t => quizAdminAct("qdel", t.dataset.id),
+  qpub: t => quizAdminAct("pub", t.dataset.id),
+  qdel: t => quizAdminAct("del", t.dataset.id),
+  qqdel: t => quizAdminAct("qdel", t.dataset.id),
   qshow: t => quizShow(t.dataset.id),
   qappend: t => { quizForm.target = t.dataset.id; render(); toast("اختر نوع الأسئلة والصق النص أعلى هذه القائمة."); }
 };
@@ -321,4 +540,6 @@ function quizOnChange(e){
   if(t.classList && t.classList.contains("dq-text")){ const d = draft[+t.dataset.qi]; if(d) d.text = t.value; return true; }
   return false;
 }
-function quizRouteChange(h){ if(!h.startsWith("#/quiz/")) qz = null; }
+function quizRouteChange(h){
+  if(!h.startsWith("#/quiz/")) qz = null;
+                                                                                             }
