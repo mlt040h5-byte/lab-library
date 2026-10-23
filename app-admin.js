@@ -38,6 +38,11 @@ const newPath = sid => `${sid}/${crypto.randomUUID()}.pdf`;
 const upload = (path, f) => sb.storage.from(BUCKET).upload(path, f, {contentType:"application/pdf", upsert:false});
 
 async function saveLecture(){
+  // مشرف المحتوى يضيف محاضرات جديدة فقط ولا يعدّل محاضرة موجودة.
+  if(isContentManager && !isAdmin && editing){
+    editing = null;
+    return toast("مشرف المحتوى يستطيع إضافة المحاضرات وحذفها فقط.", "err");
+  }
   if(busy) return;
   const sid = $("#f-sub").value, title = $("#f-title").value.trim(), desc = $("#f-desc").value.trim(), file = $("#f-file").files[0];
   const kind = $("#f-kind2").value || null, semester = $("#f-sem2").value || null;
@@ -120,6 +125,20 @@ async function saveBg(reset){
 
 /* ---------- الإعلانات ---------- */
 function annPanel(){
+  if(isContentManager && !isAdmin){
+    return `<div class="panel"><h2>📢 الإعلانات والتبليغات</h2>
+      <label>نص الإعلان</label>
+      <textarea id="ann-text" rows="3" maxlength="500" placeholder="اكتب الإعلان أو التبليغ هنا"></textarea>
+      <p><button class="btn" data-act="annpost">نشر الإعلان</button></p>
+      <h3>الإعلانات الحالية</h3>
+      ${anns.length ? anns.slice(0,30).map(a => `<div class="lec" style="margin:8px 0">
+        <p>${esc(a.message)}</p>
+        <div class="m">${fmtDate(a.created_at)}</div>
+        <button class="btn del sm" data-act="anndel" data-id="${a.id}">حذف الإعلان</button>
+      </div>`).join("") : '<p class="hint">لا توجد إعلانات.</p>'}
+    </div>`;
+  }
+
   return `<div class="panel"><h2>📢 إعلان للطلاب</h2>
    <textarea id="ann-text" rows="2" maxlength="500" placeholder="مثال: أُضيفت محاضرات الأنسجة الجديدة"></textarea>
    <label style="font-weight:400"><input type="checkbox" id="ann-pin" style="width:auto"> تثبيت الإعلان في أعلى الصفحة</label>
@@ -129,13 +148,31 @@ function annPanel(){
    <p class="hint">الإعلان الجديد يصل تلقائيًا إلى إشعارات الطلاب داخل التطبيق.</p></div>`;
 }
 async function postAnn(){
-  const m = $("#ann-text").value.trim(); if(!m) return toast("اكتب نص الإعلان.","err");
-  const pin = $("#ann-pin").checked, alsoPush = $("#ann-push").checked;
+  const field = $("#ann-text");
+  const m = field ? field.value.trim() : "";
+  if(!m) return toast("اكتب نص الإعلان.","err");
+
+  const managerOnly = isContentManager && !isAdmin;
+  const pin = managerOnly ? false : !!($("#ann-pin") && $("#ann-pin").checked);
+  const alsoPush = managerOnly ? false : !!($("#ann-push") && $("#ann-push").checked);
+
   const r = await sb.from("announcements").insert({message:m, pinned:pin});
   if(r.error) return toast("فشل النشر: " + r.error.message, "err");
+
   toast("تم نشر الإعلان.");
-  if(alsoPush){ try{ const d = await sendPush("📢 إعلان جديد", m); toast("نُشر الإعلان وأُرسل إشعار إلى " + d.sent + " جهاز."); }catch(e){ toast("نُشر الإعلان لكن فشل إشعار الهاتف: " + e.message, "err"); } }
-  await load(); render();
+
+  // إشعارات الهاتف أداة للمالك الكامل فقط.
+  if(alsoPush && isAdmin){
+    try{
+      const d = await sendPush("📢 إعلان جديد", m);
+      toast("نُشر الإعلان وأُرسل إشعار إلى " + d.sent + " جهاز.");
+    }catch(e){
+      toast("نُشر الإعلان لكن فشل إشعار الهاتف: " + e.message, "err");
+    }
+  }
+
+  await load();
+  render();
 }
 async function annUpdate(id, patch){
   const r = await sb.from("announcements").update(patch).eq("id", id);
@@ -327,6 +364,75 @@ function statsPanel(){
    <button class="btn sec sm" data-act="statsreload">تحديث</button></div>`;
 }
 
+/* ---------- لوحة مشرف المحتوى ---------- */
+function contentManagerView(){
+  const list = filtered();
+
+  return `<p class="crumb">
+      <a href="#/">← المكتبة</a>
+      · <button class="btn sec sm" data-act="logoutcontent">تسجيل الخروج</button>
+    </p>
+
+    <div class="panel">
+      <h2>📚 إدارة المحاضرات</h2>
+
+      <label>المادة</label>
+      <select id="f-sub">
+        ${subjects.map(s => `<option value="${esc(s.id)}">${esc(s.name_ar)} — ${esc(s.name_en)}</option>`).join("")}
+      </select>
+
+      <label>عنوان المحاضرة</label>
+      <input id="f-title" maxlength="200">
+
+      <div class="bar">
+        <div style="flex:1">
+          <label>النوع</label>
+          <select id="f-kind2">
+            <option value="">— بدون —</option>
+            ${LEC_KINDS.map(x => `<option value="${x}">${x}</option>`).join("")}
+          </select>
+        </div>
+        <div style="flex:1">
+          <label>الفصل</label>
+          <select id="f-sem2">
+            <option value="">— بدون —</option>
+            ${SEMS.map(x => `<option value="${x}">${x}</option>`).join("")}
+          </select>
+        </div>
+      </div>
+
+      <label>وصف المحاضرة (اختياري)</label>
+      <textarea id="f-desc" rows="2" maxlength="1000"></textarea>
+
+      <label>ملف PDF (الحد الأقصى ${MAX_MB} ميجابايت)</label>
+      <input id="f-file" type="file" accept="application/pdf,.pdf">
+
+      <p><button class="btn" data-act="save" ${busy ? "disabled" : ""}>
+        ${busy ? "جارٍ الرفع…" : "رفع المحاضرة"}
+      </button></p>
+    </div>
+
+    ${schedPanel()}
+    ${quizAdminPanel()}
+    ${annPanel()}
+
+    <h2>المحاضرات الحالية (${lectures.length})</h2>
+    ${searchBlock(true)}
+
+    ${list.length ? list.map(l => {
+      const s = subj(l.subject_id);
+      return `<div class="lec">
+        <h3>${esc(l.title)}</h3>
+        <div class="m">${s ? esc(s.name_ar) : ""} · ${l.kind ? esc(l.kind) : ""} · ${fmtDate(l.created_at)}</div>
+        ${l.description ? `<p>${esc(l.description)}</p>` : ""}
+        <div class="acts">
+          <button class="btn del sm" data-act="del" data-id="${l.id}">🗑 حذف المحاضرة</button>
+        </div>
+      </div>`;
+    }).join("") : `<div class="empty">لا توجد محاضرات مطابقة.</div>`}
+  `;
+}
+
 /* ---------- صفحة الإدارة ---------- */
 function adminView(){
   if(!session) return `<div class="panel"><h2>تسجيل دخول المالك</h2>
@@ -339,7 +445,12 @@ function adminView(){
    <p class="hint">اكتب بريدك في الخانة أعلاه فقط، ثم اضغط إرسال الرمز.</p>
    <button class="btn sec" data-act="sendotp">إرسال الرمز إلى بريدي</button>
    <div id="otpbox" style="display:none"><label>الرمز الذي وصلك</label><input id="otp" inputmode="numeric" autocomplete="one-time-code" dir="ltr" maxlength="10"><p><button class="btn" data-act="verifyotp">تأكيد الرمز</button></p></div></div>`;
+  if(roleErr) return `<div class="panel"><h2>تعذر التحقق من الصلاحية</h2><p>لم نتمكن من تأكيد دور هذا الحساب من الخادم.</p><button class="btn" data-act="retryadmin">إعادة المحاولة</button> <button class="btn sec" data-act="logout">تسجيل الخروج</button></div>`;
   if(adminErr && !isAdmin) return `<div class="panel"><h2>تعذر التحقق من الصلاحية</h2><p>المشكلة في الاتصال بالإنترنت وليست في حسابك.</p><button class="btn" data-act="retryadmin">إعادة المحاولة</button> <button class="btn sec" data-act="logout">تسجيل الخروج</button></div>`;
+  if(isContentManager && !isAdmin){
+    editing = null;
+    return contentManagerView();
+  }
   if(!isAdmin) return `<div class="panel"><h2>غير مصرّح</h2><p>هذه الصفحة لمالك المكتبة فقط.</p><p><a class="btn" href="#/">العودة للمكتبة</a> <button class="btn sec" data-act="logout">تسجيل الخروج</button></p></div>`;
   const e = editing ? lectures.find(l => l.id === editing) : null, list = filtered();
   const opt = (arr, v) => arr.map(x => `<option ${v===x?"selected":""}>${x}</option>`).join("");
@@ -367,4 +478,4 @@ function adminView(){
   ${statsPanel()}
   <h2>كل المحاضرات (${lectures.length})</h2>${searchBlock(true)}
   ${list.length ? list.map(l => lecCard(l, true)).join("") : `<div class="empty">لا توجد محاضرات.</div>`}`;
-}
+      }
