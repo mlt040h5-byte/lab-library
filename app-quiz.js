@@ -10,16 +10,19 @@ const OPT_RE = /^\s*[\(\[]?\s*([A-Ea-eأاآبجده])ـ*\s*[\)\]\.\-–—:：�
 const ANS_RE = /^\s*(?:الإجابة الصحيحة|الاجابة الصحيحة|الإجابة|الاجابة|الجواب الصحيح|الجواب|Correct answer|Correct|Answer|Ans)\s*[:：\-–=]\s*(.+?)\s*$/i;
 const EXP_RE = /^\s*(?:الشرح|التوضيح|التفسير|التعليل|Explanation|Reason)\s*[:：\-–]\s*(.+?)\s*$/i;
 const MARK_END = /\s*(?:\*+|✓|✔|✅|☑)\s*$/, MARK_START = /^\s*(?:\*+|✓|✔|✅|☑)\s*/;
+
 function takeMark(t){
   let c = false;
   if(MARK_END.test(t)){ t = t.replace(MARK_END,""); c = true; }
   if(MARK_START.test(t)){ t = t.replace(MARK_START,""); c = true; }
   return {t:t.trim(), c};
 }
+
 function stripNum(s){
   return String(s).replace(/^\s*(?:(?:السؤال|سؤال|س|Q|Question)\s*)?\d+\s*[\.\)\-–:：،]\s*/i,"")
     .replace(/^\s*(?:السؤال|سؤال)\s*[:：\-–]\s*/,"").trim();
 }
+
 function inlineOptions(line){
   const re = /(?:^|\s)[\(\[]?([A-Ea-eأاآبجده])ـ*\s*[\)\]]\s*/g, hits = []; let m;
   while((m = re.exec(line))) hits.push({idx:m.index, end:re.lastIndex, lab:m[1]});
@@ -27,6 +30,7 @@ function inlineOptions(line){
   for(let i = 1; i < hits.length; i++) if(labelIndex(hits[i].lab) !== i) return null;
   return {head:line.slice(0, hits[0].idx).trim(), opts:hits.map((h,i) => line.slice(h.end, i+1 < hits.length ? hits[i+1].idx : line.length).trim())};
 }
+
 function setAnswer(q, v){
   v = String(v || "").trim().replace(/[\.\،]+$/,"").replace(/^[\(\[]|[\)\]]$/g,"").trim();
   const t = v.replace(/ـ/g,""); let i = -1;
@@ -38,12 +42,14 @@ function setAnswer(q, v){
   }
   if(i >= 0 && i < q.options.length) q.correct = i;
 }
+
 function parseMcq(raw){
   const lines = normDigits(raw).replace(/\r/g,"").split("\n").map(s => s.trim()).filter(Boolean);
   const out = []; let cur = null, skipped = 0;
   const flush = () => { if(cur){ if(cur.text && cur.options.length >= 2) out.push(cur); else skipped++; } cur = null; };
   const startQ = t => { flush(); cur = {qtype:"mcq", text:t, options:[], correct:null, explanation:""}; };
   const addOpt = txt => { const m = takeMark(txt); if(!m.t) return; cur.options.push(m.t); if(m.c) cur.correct = cur.options.length - 1; };
+
   for(const line of lines){
     let m;
     if((m = ANS_RE.exec(line))){ if(cur) setAnswer(cur, m[1]); continue; }
@@ -63,6 +69,7 @@ function parseMcq(raw){
   flush();
   return {items:out, skipped};
 }
+
 const TRUE_W = ["صح","صحيحة","صحيح","true","t","✓","✔","✅"], FALSE_W = ["خطأ","خطا","خاطئة","خاطئ","غلط","false","f","✗","✘","✖","❌","×"];
 const tfVal = w => { const x = String(w || "").trim().toLowerCase(); if(TRUE_W.includes(x)) return 0; if(FALSE_W.includes(x)) return 1; return null; };
 const TF_ASK = /[\(\[]?\s*(?:صح\s*[\/،,\-]\s*خطأ|صح\s*أم\s*خطأ|صح\s*أو\s*خطأ|true\s*\/\s*false)\s*[\)\]]?\s*[\?؟:]?\s*$/i;
@@ -71,22 +78,27 @@ const TF_DASH = /\s*[\-–—:：]\s*(صح|صحيحة|صحيح|خطأ|خطا|خ�
 const TF_SYM = /\s*(✓|✔|✅|✗|✘|✖|❌|×)\s*$/;
 const TF_WORD = /\s(صح|خطأ|خطا|true|false)\s*\.?\s*$/i;
 const TF_LEAD = /^\s*[\(\[]?\s*(صح|خطأ|خطا|✓|✔|✅|✗|✘|✖|❌)\s*[\)\]]?\s*[\-–—:：]\s*/;
+
 function parseTf(raw){
   const lines = normDigits(raw).replace(/\r/g,"").split("\n").map(s => s.trim()).filter(Boolean);
   const out = []; let cur = null;
+
   for(const line of lines){
     let m;
     if((m = ANS_RE.exec(line))){ if(cur){ const v = tfVal(m[1].replace(/[\.\،\s]+$/,"")); if(v !== null) cur.correct = v; } continue; }
     if((m = EXP_RE.exec(line))){ if(cur) cur.explanation = m[1]; continue; }
+
     let t = stripNum(line).replace(TF_ASK,"").trim(), c = null, mm;
     if((mm = TF_PAR.exec(t))){ c = tfVal(mm[1]); t = t.slice(0, mm.index).trim(); }
     else if((mm = TF_DASH.exec(t))){ c = tfVal(mm[1]); t = t.slice(0, mm.index).trim(); }
     else if((mm = TF_SYM.exec(t))){ c = tfVal(mm[1]); t = t.slice(0, mm.index).trim(); }
     else if((mm = TF_WORD.exec(t))){ c = tfVal(mm[1]); t = t.slice(0, mm.index).trim(); }
     else if((mm = TF_LEAD.exec(t))){ c = tfVal(mm[1]); t = t.slice(mm[0].length).trim(); }
+
     t = t.replace(/[\s\-–:：]+$/,"").trim();
     if(!t) continue;
-    cur = {qtype:"tf", text:t, options:["صح","خطأ"], correct:c, explanation:""}; out.push(cur);
+    cur = {qtype:"tf", text:t, options:["صح","خطأ"], correct:c, explanation:""};
+    out.push(cur);
   }
   return {items:out, skipped:0};
 }
@@ -118,6 +130,7 @@ async function loadQuizzes(){
     }
   }catch(_){}
 }
+
 const bestPct = id => {
   const a = attempts.filter(x => x.quiz_id === id);
   return a.length ? Math.max(...a.map(x => pct(x.score, x.total))) : null;
@@ -161,6 +174,7 @@ function resultsBlock(){
      return `<div style="flex:1;text-align:center;font-size:.7rem"><div style="height:${Math.max(4, p*0.7)}px;background:var(--brand);border-radius:6px 6px 0 0"></div>${p}%</div>`;
    }).join("")}</div></div>`;
 }
+
 function quizzesView(){
   const list = quizzes.filter(z => z.published);
   const groups = subjects.map(s => ({s, items:list.filter(z => z.subject_id === s.id)})).filter(g => g.items.length);
@@ -171,6 +185,7 @@ function quizzesView(){
     return `<div class="lec"><h3>${esc(z.title)}</h3><div class="m">${z.qn} سؤال · ${b === null ? "لم تُحاول بعد" : "أفضل نتيجة: " + b + "%"}</div><div class="acts"><a class="btn sm" href="#/quiz/${z.id}">${b === null ? "ابدأ الاختبار" : "أعد المحاولة"}</a></div></div>`;
   }).join("")}`).join("") : '<div class="empty">لا توجد اختبارات منشورة بعد.</div>'}`;
 }
+
 async function startQuiz(z){
   qz = {quiz:z, qs:[], i:0, ans:{}, done:false, loading:true, busy:false, saved:null, err:""};
   const mine = qz;
@@ -184,6 +199,7 @@ async function startQuiz(z){
 
   render();
 }
+
 function quizView(id){
   const z = quizzes.find(x => x.id === id && (x.published || isAdmin));
   if(!z) return `<div class="empty">الاختبار غير موجود.</div><p><a class="btn" href="#/quizzes">الاختبارات</a></p>`;
@@ -213,6 +229,7 @@ function quizView(id){
    ${a && a.ex ? `<p class="hint">💡 ${esc(a.ex)}</p>` : ""}
    ${a ? `<p><button class="btn" data-act="qnext">${qz.i + 1 < n ? "السؤال التالي" : "عرض النتيجة"}</button></p>` : ""}</div>`;
 }
+
 function quizResultView(){
   const n = qz.qs.length, ok = qz.qs.filter(q => qz.ans[q.id] && qz.ans[q.id].correct).length, p = pct(ok, n);
   const wrong = qz.qs.filter(q => !(qz.ans[q.id] && qz.ans[q.id].correct));
@@ -227,6 +244,7 @@ function quizResultView(){
     return `<div class="lec"><p style="margin:0;color:var(--ink)">${esc(q.text)}</p>${a ? `<div class="m">إجابتك: ✗ ${esc(q.options[a.choice])}</div><div class="m" style="color:var(--ok)">الصحيحة: ✓ ${esc(q.options[a.ci])}</div>${a.ex ? `<div class="m">💡 ${esc(a.ex)}</div>` : ""}` : '<div class="m">لم تُجب عن هذا السؤال.</div>'}</div>`;
   }).join("")}` : ""}`;
 }
+
 async function qPick(oi){
   if(!qz || qz.loading || qz.done || qz.busy) return;
 
@@ -250,6 +268,7 @@ async function qPick(oi){
   };
   render();
 }
+
 async function qNext(){
   if(!qz) return;
 
@@ -299,11 +318,12 @@ function draftHtml(){
   return `<h3>المسودة: ${draft.length} سؤال ${missing ? `<span class="new" style="background:var(--err)">${missing} بلا إجابة صحيحة</span>` : ""}</h3>
   ${draft.map((d, i) => `<div class="lec" style="margin:8px 0"><div class="m">${i+1} · ${d.qtype === "tf" ? "صح/خطأ" : "اختيار من متعدد"}</div>
    <textarea class="dq-text" data-qi="${i}" rows="2" maxlength="2000">${esc(d.text)}</textarea>
-   ${d.options.map((o, oi) => `<button class="opt ${d.correct === oi ? "ok" : ""}" data-act="dcorrect" data-qi="${i}" data-oi="${oi}"><span>${esc(o)}</span><b>${d.correct === oi ? "✓" : ""}</b></button>`).join("")}
+   ${d.options.map((o, oi) => `<button class="opt ${d.correct === oi ? "ok" : ""}" style="color:#172b34!important;background:#f7fafb!important;border-color:#b8c8d0!important;text-align:right;white-space:normal;line-height:1.6;font-weight:600" data-act="dcorrect" data-qi="${i}" data-oi="${oi}"><span style="color:#172b34!important;opacity:1!important">${esc(o)}</span><b style="color:#172b34!important;opacity:1!important">${d.correct === oi ? "✓" : ""}</b></button>`).join("")}
    ${d.correct === null ? '<p class="hint" style="color:var(--err)">اضغط على الإجابة الصحيحة.</p>' : ""}
    <button class="btn del sm" data-act="dqdel" data-qi="${i}">حذف السؤال</button></div>`).join("")}
   <p><button class="btn" data-act="qsave" ${busy ? "disabled" : ""}>${busy ? "جارٍ الحفظ…" : "حفظ الاختبار"}</button> <button class="btn sec" data-act="dclear">مسح المسودة</button></p>`;
 }
+
 function qlistHtml(){
   if(!qopenList) return `<p class="hint">جارٍ التحميل…</p>`;
 
@@ -315,6 +335,7 @@ function qlistHtml(){
     return `<div class="row"><b>${i+1}. ${esc(q.text)}</b>${q.options.map((o, oi) => `<div class="m" style="${oi === k ? "color:var(--ok);font-weight:700" : ""}">${oi === k ? "✓" : "○"} ${esc(o)}</div>`).join("")}<button class="btn del sm" data-act="qqdel" data-id="${q.id}">حذف السؤال</button></div>`;
   }).join("") || '<p class="hint">لا توجد أسئلة.</p>';
 }
+
 function quizListHtml(){
   return quizzes.map(z => {
     const at = adminAttempts.filter(a => a.quiz_id === z.id), s = subj(z.subject_id);
@@ -407,6 +428,7 @@ function quizParse(){
 
   toast(`تم تحليل ${r.items.length} سؤال` + (r.skipped ? ` (تجاهلتُ ${r.skipped} نصًّا لم يكتمل)` : "") + ". راجعها ثم احفظ.");
 }
+
 async function quizSave(){
   if(busy) return;
   if(!draft.length) return toast("لا توجد أسئلة.","err");
@@ -453,6 +475,7 @@ async function quizSave(){
   render();
   toast("تم حفظ الاختبار.");
 }
+
 async function quizShow(id){
   if(isContentManager && !isAdmin){
     return toast("لا يملك مشرف المحتوى صلاحية عرض الإجابات الصحيحة.", "err");
@@ -476,6 +499,7 @@ async function quizShow(id){
   qopenList = r.data || [];
   render();
 }
+
 async function quizAdminAct(kind, id){
   // مشرف المحتوى يستطيع حذف الاختبار بالكامل فقط.
   if(isContentManager && !isAdmin && kind !== "del"){
@@ -525,12 +549,14 @@ const QUIZ_ACT = {
   qshow: t => quizShow(t.dataset.id),
   qappend: t => { quizForm.target = t.dataset.id; render(); toast("اختر نوع الأسئلة والصق النص أعلى هذه القائمة."); }
 };
+
 function quizOnInput(e){
   const id = e.target.id;
   if(id === "qz-title"){ quizForm.title = e.target.value; return true; }
   if(id === "qz-text"){ quizForm.text = e.target.value; return true; }
   return false;
 }
+
 function quizOnChange(e){
   const t = e.target, id = t.id;
   if(id === "qz-target"){ quizForm.target = t.value; render(); return true; }
@@ -540,6 +566,7 @@ function quizOnChange(e){
   if(t.classList && t.classList.contains("dq-text")){ const d = draft[+t.dataset.qi]; if(d) d.text = t.value; return true; }
   return false;
 }
+
 function quizRouteChange(h){
   if(!h.startsWith("#/quiz/")) qz = null;
-                                                                                             }
+                                                                   }
