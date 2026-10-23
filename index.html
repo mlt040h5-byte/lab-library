@@ -39,6 +39,36 @@ label{display:block;margin:12px 0 4px;font-weight:500}
 .btn.del{background:var(--err)}
 .btn:disabled{opacity:.5}
 .btn.sm{padding:6px 12px;font-size:.9rem}
+
+/* إصلاح وضوح نصوص خيارات الاختبار على الخلفيات الفاتحة والداكنة */
+.opt{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  width:100%;
+  margin:8px 0;
+  padding:12px 14px;
+  border:1px solid #b8c8d0;
+  border-radius:10px;
+  background:#f7fafb;
+  color:#172b34 !important;
+  text-align:right;
+  white-space:normal;
+  line-height:1.6;
+  font-weight:500;
+  cursor:pointer;
+}
+.opt span{flex:1;min-width:0;color:#172b34 !important;overflow-wrap:anywhere}
+.opt b{flex:0 0 auto;color:inherit !important}
+.opt:disabled{opacity:1;cursor:default}
+.opt.ok{background:#e6f6eb;border-color:#25824d;color:#14532d !important}
+.opt.ok span,.opt.ok b{color:#14532d !important}
+.opt.bad{background:#fff0ef;border-color:#c43e37;color:#8b1e1e !important}
+.opt.bad span,.opt.bad b{color:#8b1e1e !important}
+.opt.dim{background:#edf1f3;border-color:#c9d2d7;color:#596a72 !important}
+.opt.dim span,.opt.dim b{color:#596a72 !important}
+
 .chipb{border:1px solid var(--line);background:var(--card);border-radius:18px;padding:4px 11px;font-size:.85rem;cursor:pointer;text-decoration:none;color:var(--ink);white-space:nowrap}
 .chipb.on{background:var(--brand);color:#fff;border-color:var(--brand)}
 .chips{display:flex;gap:6px;overflow-x:auto;padding-bottom:6px;margin-bottom:10px}
